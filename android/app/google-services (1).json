@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "627883387892",
+    "project_id": "bahirdartraffic",
+    "storage_bucket": "bahirdartraffic.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:627883387892:android:f469745a335034ef3027a1",
+        "android_client_info": {
+          "package_name": "com.bahirdar.traffic"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBZ_ByVh-r89FZ3tESG5n7qfHyL_M1-lp4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

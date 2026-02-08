@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart'; // ቀን ለመጻፍ ያስፈልገናል
+import 'package:intl/intl.dart';
 
 class TicketFormPage extends StatefulWidget {
   final String officerId;
@@ -13,6 +13,8 @@ class TicketFormPage extends StatefulWidget {
 class _TicketFormPageState extends State<TicketFormPage> {
   final _plateController = TextEditingController();
   final _amountController = TextEditingController();
+  final _ownerNameController = TextEditingController(); // NEW
+  final _ownerPhoneController = TextEditingController(); // NEW
   String _selectedViolation = 'Speeding';
 
   final List<String> _violations = [
@@ -23,7 +25,118 @@ class _TicketFormPageState extends State<TicketFormPage> {
     'Overloading',
   ];
 
-  // --- 1. እዚህ ጋር ነው Verification Logic የምንጨምረው ---
+  // --- 1. የፖሊሱ የሥራ አፈጻጸም ታሪክ (Daily, Weekly, Monthly) ---
+  void _showOfficerHistory() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.75,
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            const Text(
+              "MY PERFORMANCE SUMMARY",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const Divider(),
+            Expanded(
+              child: StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('tickets')
+                    .where('officerId', isEqualTo: widget.officerId)
+                    .orderBy('timestamp', descending: true)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData)
+                    return const Center(child: CircularProgressIndicator());
+                  var docs = snapshot.data!.docs;
+
+                  int today = 0, week = 0, month = 0;
+                  DateTime now = DateTime.now();
+
+                  for (var doc in docs) {
+                    if (doc['timestamp'] == null) continue;
+                    DateTime d = (doc['timestamp'] as Timestamp).toDate();
+                    if (d.day == now.day &&
+                        d.month == now.month &&
+                        d.year == now.year)
+                      today++;
+                    if (now.difference(d).inDays <= 7) week++;
+                    if (d.month == now.month && d.year == now.year) month++;
+                  }
+
+                  return Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
+                          _statTile("Today", today),
+                          _statTile("Week", week),
+                          _statTile("Month", month),
+                        ],
+                      ),
+                      const Divider(height: 30),
+                      const Text(
+                        "Recent Violations",
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 10),
+                      Expanded(
+                        child: ListView.builder(
+                          itemCount: docs.length,
+                          itemBuilder: (context, index) {
+                            var data =
+                                docs[index].data() as Map<String, dynamic>;
+                            return ListTile(
+                              leading: const Icon(Icons.description_outlined),
+                              title: Text("Plate: ${data['plate']}"),
+                              subtitle: Text(
+                                "${data['violation']} - ${data['amount']} ETB",
+                              ),
+                              trailing: Text(
+                                data['timestamp'] != null
+                                    ? DateFormat('MMM d').format(
+                                        (data['timestamp'] as Timestamp)
+                                            .toDate(),
+                                      )
+                                    : "",
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _statTile(String label, int count) {
+    return Column(
+      children: [
+        Text(label, style: const TextStyle(color: Colors.grey)),
+        Text(
+          "$count",
+          style: const TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
+            color: Colors.blue,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // --- 2. የሰሌዳ ማረጋገጫ (Verification Logic) ---
   void _verifyVehicle() async {
     String plate = _plateController.text.trim().toUpperCase();
     if (plate.isEmpty) {
@@ -49,25 +162,19 @@ class _TicketFormPageState extends State<TicketFormPage> {
               if (!snapshot.hasData)
                 return const Center(child: CircularProgressIndicator());
               var tickets = snapshot.data!.docs;
-
-              if (tickets.isEmpty) {
+              if (tickets.isEmpty)
                 return const Center(child: Text("No violation record found."));
-              }
 
               return ListView.builder(
                 itemCount: tickets.length,
                 itemBuilder: (context, index) {
                   var data = tickets[index].data() as Map<String, dynamic>;
                   bool isPaid = data['status'] == 'PAID';
-
-                  // --- ቀኑን የማንበቢያ ኮድ ---
-                  String formattedDate = "No Date";
-                  if (data['timestamp'] != null) {
-                    DateTime date = (data['timestamp'] as Timestamp).toDate();
-                    formattedDate = DateFormat(
-                      'yMMMd',
-                    ).format(date); // ለምሳሌ፡ Feb 8, 2026
-                  }
+                  String dateStr = data['timestamp'] != null
+                      ? DateFormat(
+                          'yMMMd',
+                        ).format((data['timestamp'] as Timestamp).toDate())
+                      : "N/A";
 
                   return Card(
                     color: isPaid ? Colors.green.shade50 : Colors.red.shade50,
@@ -76,8 +183,8 @@ class _TicketFormPageState extends State<TicketFormPage> {
                         "${data['violation']} - ${data['amount']} ETB",
                       ),
                       subtitle: Text(
-                        "Status: ${data['status']}\nDate: $formattedDate",
-                      ), // ቀኑ እዚህ ይታያል
+                        "Status: ${data['status']}\nDate: $dateStr\nOwner: ${data['ownerName'] ?? 'Unknown'}",
+                      ),
                       trailing: Icon(
                         isPaid ? Icons.check_circle : Icons.warning,
                         color: isPaid ? Colors.green : Colors.red,
@@ -99,7 +206,15 @@ class _TicketFormPageState extends State<TicketFormPage> {
     );
   }
 
+  // --- 3. ቲኬት የመቁረጥ ሎጂክ (Issue Ticket) ---
   void _issueTicket() async {
+    if (_plateController.text.isEmpty || _amountController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please fill required fields")),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -113,11 +228,13 @@ class _TicketFormPageState extends State<TicketFormPage> {
       await FirebaseFirestore.instance.collection('tickets').doc(ticketId).set({
         'ticketId': ticketId,
         'plate': _plateController.text.toUpperCase(),
+        'ownerName': _ownerNameController.text.trim(),
+        'ownerPhone': _ownerPhoneController.text.trim(),
         'violation': _selectedViolation,
         'amount': double.parse(_amountController.text),
         'status': 'UNPAID',
         'officerId': widget.officerId,
-        'timestamp': FieldValue.serverTimestamp(), // ለዳሽቦርድ ማጣሪያ ይጠቅመናል
+        'timestamp': FieldValue.serverTimestamp(),
       });
 
       if (!mounted) return;
@@ -128,7 +245,7 @@ class _TicketFormPageState extends State<TicketFormPage> {
         builder: (context) => AlertDialog(
           title: const Icon(Icons.check_circle, color: Colors.green, size: 50),
           content: Text(
-            "Ticket Generated!\n\nID: $ticketId\nPlate: ${_plateController.text}",
+            "Ticket Generated!\n\nID: $ticketId\nPlate: ${_plateController.text}\nOwner: ${_ownerNameController.text}",
           ),
           actions: [
             TextButton(
@@ -136,6 +253,8 @@ class _TicketFormPageState extends State<TicketFormPage> {
                 Navigator.pop(context);
                 _plateController.clear();
                 _amountController.clear();
+                _ownerNameController.clear();
+                _ownerPhoneController.clear();
               },
               child: const Text("OK"),
             ),
@@ -157,6 +276,12 @@ class _TicketFormPageState extends State<TicketFormPage> {
         title: Text("Officer: ${widget.officerId}"),
         backgroundColor: Colors.blue,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            onPressed: _showOfficerHistory,
+            icon: const Icon(Icons.person_pin),
+          ), // PROFILE BUTTON
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
@@ -171,11 +296,28 @@ class _TicketFormPageState extends State<TicketFormPage> {
             TextField(
               controller: _plateController,
               decoration: const InputDecoration(
-                labelText: "Vehicle Plate Number",
+                labelText: "Vehicle Plate Number *",
                 border: OutlineInputBorder(),
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 15),
+            TextField(
+              controller: _ownerNameController,
+              decoration: const InputDecoration(
+                labelText: "Driver/Owner Name",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 15),
+            TextField(
+              controller: _ownerPhoneController,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                labelText: "Owner Phone Number",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 15),
             DropdownButtonFormField(
               initialValue: _selectedViolation,
               decoration: const InputDecoration(
@@ -187,19 +329,17 @@ class _TicketFormPageState extends State<TicketFormPage> {
                   .toList(),
               onChanged: (val) => setState(() => _selectedViolation = val!),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 15),
             TextField(
               controller: _amountController,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
-                labelText: "Fine Amount (ETB)",
+                labelText: "Fine Amount (ETB) *",
                 border: OutlineInputBorder(),
                 prefixText: "ETB ",
               ),
             ),
-            const SizedBox(height: 30),
-
-            // --- 2. እዚህ ጋር ነው በተኑን የምንጨምረው ---
+            const SizedBox(height: 25),
             ElevatedButton(
               onPressed: _issueTicket,
               style: ElevatedButton.styleFrom(

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-// intl was unused, removed it to fix the warning.
+import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 class PaymentPage extends StatefulWidget {
@@ -55,8 +55,11 @@ class _PaymentPageState extends State<PaymentPage> {
     String ticketId = ticket.id;
     double amount = (ticket['amount'] ?? 0).toDouble();
     String plate = ticket['plate'];
+    String ownerName = ticket['ownerName'] ?? "N/A"; // ከቲኬቱ ስሙን እናነባለን
     String receiptNo =
         "BD-REV-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}";
+
+    DateTime now = DateTime.now();
 
     await FirebaseFirestore.instance
         .collection('tickets')
@@ -77,9 +80,10 @@ class _PaymentPageState extends State<PaymentPage> {
       'method': method,
       'timestamp': FieldValue.serverTimestamp(),
       'receiptNo': receiptNo,
+      'ownerName': ownerName,
     });
 
-    _showReceipt(receiptNo, plate, amount, method, ticketId);
+    _showReceipt(receiptNo, plate, amount, method, now, ownerName);
   }
 
   void _showReceipt(
@@ -87,8 +91,11 @@ class _PaymentPageState extends State<PaymentPage> {
     String plate,
     double amount,
     String method,
-    String tId,
+    DateTime date,
+    String ownerName,
   ) {
+    String formattedDate = DateFormat('MMM d, yyyy - h:mm a').format(date);
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -102,6 +109,18 @@ class _PaymentPageState extends State<PaymentPage> {
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             const Divider(),
+            Text(
+              "Date: $formattedDate",
+              style: const TextStyle(color: Colors.blueGrey, fontSize: 13),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              "Owner: $ownerName",
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Colors.blue,
+              ),
+            ), // ስም ተጨምሯል
             Text("Plate: $plate"),
             Text("Amount: $amount ETB"),
             Text("Method: $method"),
@@ -134,10 +153,10 @@ class _PaymentPageState extends State<PaymentPage> {
             padding: const EdgeInsets.all(16.0),
             child: TextField(
               controller: _searchController,
-              decoration: InputDecoration(
+              decoration: const InputDecoration(
                 hintText: "Search Ticket ID or Plate Number...",
-                prefixIcon: const Icon(Icons.search),
-                border: const OutlineInputBorder(),
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
               ),
               onSubmitted: (_) => _searchTickets(),
             ),
@@ -157,7 +176,16 @@ class _PaymentPageState extends State<PaymentPage> {
                         ),
                         child: ListTile(
                           title: Text("Plate: ${tkt['plate']}"),
-                          subtitle: Text("Fine: ${tkt['amount']} ETB"),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "Owner: ${tkt['ownerName'] ?? 'N/A'}",
+                                style: const TextStyle(color: Colors.blueGrey),
+                              ), // ክፍያ ከመቀበል በፊት ለማየት
+                              Text("Fine: ${tkt['amount']} ETB"),
+                            ],
+                          ),
                           trailing: ElevatedButton(
                             onPressed: () => _showPaymentOptions(tkt),
                             style: ElevatedButton.styleFrom(
@@ -178,7 +206,7 @@ class _PaymentPageState extends State<PaymentPage> {
             child: OutlinedButton.icon(
               onPressed: _showClerkHistory,
               icon: const Icon(Icons.history),
-              label: const Text("MY TODAY'S COLLECTION"),
+              label: const Text("MY PAYMENT HISTORY"),
             ),
           ),
         ],
@@ -201,7 +229,6 @@ class _PaymentPageState extends State<PaymentPage> {
           ListTile(
             leading: const Icon(Icons.phone_android, color: Colors.blue),
             title: const Text("Telebirr"),
-            // FIXED: Changed onPressed to onTap
             onTap: () {
               Navigator.pop(context);
               _processPayment(tkt, "Telebirr");
@@ -218,12 +245,12 @@ class _PaymentPageState extends State<PaymentPage> {
           ListTile(
             leading: const Icon(Icons.money, color: Colors.green),
             title: const Text("Cash"),
-            // FIXED: Changed onPressed to onTap
             onTap: () {
               Navigator.pop(context);
               _processPayment(tkt, "Cash");
             },
           ),
+          const SizedBox(height: 20),
         ],
       ),
     );
@@ -232,36 +259,66 @@ class _PaymentPageState extends State<PaymentPage> {
   void _showClerkHistory() {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       builder: (context) => SizedBox(
-        height: 500,
+        height: MediaQuery.of(context).size.height * 0.7,
         child: StreamBuilder<QuerySnapshot>(
           stream: FirebaseFirestore.instance
               .collection('tickets')
               .where('clerkId', isEqualTo: widget.clerkId)
               .where('status', isEqualTo: 'PAID')
+              .orderBy('paymentDate', descending: true)
               .snapshots(),
           builder: (context, snapshot) {
-            if (!snapshot.hasData) {
+            if (snapshot.hasError)
+              return Center(child: Text("Error: ${snapshot.error}"));
+            if (!snapshot.hasData)
               return const Center(child: CircularProgressIndicator());
-            }
+
             var myDocs = snapshot.data!.docs;
             return Column(
               children: [
                 const Padding(
                   padding: EdgeInsets.all(16.0),
                   child: Text(
-                    "Today's Collection",
+                    "MY PAYMENT HISTORY",
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                 ),
                 Expanded(
-                  child: ListView.builder(
-                    itemCount: myDocs.length,
-                    itemBuilder: (context, index) => ListTile(
-                      title: Text("Plate: ${myDocs[index]['plate']}"),
-                      trailing: Text("${myDocs[index]['amount']} ETB"),
-                    ),
-                  ),
+                  child: myDocs.isEmpty
+                      ? const Center(child: Text("No payments collected yet."))
+                      : ListView.builder(
+                          itemCount: myDocs.length,
+                          itemBuilder: (context, index) {
+                            var data =
+                                myDocs[index].data() as Map<String, dynamic>;
+                            String dateStr = "";
+                            if (data['paymentDate'] != null) {
+                              dateStr = DateFormat('MMM d, h:mm a').format(
+                                (data['paymentDate'] as Timestamp).toDate(),
+                              );
+                            }
+
+                            return ListTile(
+                              leading: const Icon(
+                                Icons.receipt_long,
+                                color: Colors.green,
+                              ),
+                              title: Text("Plate: ${data['plate']}"),
+                              subtitle: Text(
+                                "Owner: ${data['ownerName'] ?? 'N/A'}\nDate: $dateStr",
+                              ),
+                              trailing: Text(
+                                "${data['amount']} ETB",
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              isThreeLine: true,
+                            );
+                          },
+                        ),
                 ),
               ],
             );

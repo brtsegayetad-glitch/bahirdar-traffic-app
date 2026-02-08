@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:url_launcher/url_launcher.dart'; // ስልክ ለመደወል እንዲረዳን
+import 'package:url_launcher/url_launcher.dart';
 
 class UserManagementPage extends StatefulWidget {
   const UserManagementPage({super.key});
@@ -12,9 +12,43 @@ class UserManagementPage extends StatefulWidget {
 class _UserManagementPageState extends State<UserManagementPage> {
   final _idController = TextEditingController();
   final _nameController = TextEditingController();
-  final _phoneController = TextEditingController(); // NEW: Phone Number
+  final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
   String _selectedRole = 'officer';
+
+  // --- ሰራተኛን ለማጥፋት ማረጋገጫ የሚጠይቅ ፖፕ-አፕ ---
+  void _confirmDelete(String userId, String userName) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Confirm Deletion"),
+        content: Text(
+          "Are you sure you want to delete $userName (ID: $userId)? This action cannot be undone.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("CANCEL"),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              await FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(userId)
+                  .delete();
+              if (!mounted) return;
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text("$userName has been removed.")),
+              );
+            },
+            child: const Text("DELETE", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
 
   void _addUser() async {
     String id = _idController.text.trim().toUpperCase();
@@ -36,7 +70,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
     try {
       await FirebaseFirestore.instance.collection('users').doc(id).set({
         'name': name,
-        'phone': phone, // ስልክ ቁጥር እዚህ ጋር ይገባል
+        'phone': phone,
         'role': _selectedRole,
         'password': pass,
         'mustChangePassword': true,
@@ -61,18 +95,19 @@ class _UserManagementPageState extends State<UserManagementPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("STAFF DIRECTORY")),
+      appBar: AppBar(
+        title: const Text("STAFF DIRECTORY"),
+        backgroundColor: Colors.blue.shade900,
+        foregroundColor: Colors.white,
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            // --- REGISTRATION FORM (Wrapped in Padding to fix the error) ---
             Card(
               elevation: 4,
               child: Padding(
-                padding: const EdgeInsets.all(
-                  16.0,
-                ), // Fixed the Card padding error here
+                padding: const EdgeInsets.all(16.0),
                 child: Column(
                   children: [
                     const Text(
@@ -119,6 +154,9 @@ class _UserManagementPageState extends State<UserManagementPage> {
                     const SizedBox(height: 15),
                     ElevatedButton(
                       onPressed: _addUser,
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 45),
+                      ),
                       child: const Text("REGISTER"),
                     ),
                   ],
@@ -137,9 +175,8 @@ class _UserManagementPageState extends State<UserManagementPage> {
                     .collection('users')
                     .snapshots(),
                 builder: (context, snapshot) {
-                  if (!snapshot.hasData) {
+                  if (!snapshot.hasData)
                     return const Center(child: CircularProgressIndicator());
-                  }
                   var users = snapshot.data!.docs;
                   return ListView.builder(
                     itemCount: users.length,
@@ -147,23 +184,20 @@ class _UserManagementPageState extends State<UserManagementPage> {
                       var user = users[index].data() as Map<String, dynamic>;
                       String userId = users[index].id;
                       String phone = user['phone'] ?? "";
+                      String name = user['name'] ?? "No Name";
 
                       return Card(
                         child: ListTile(
                           leading: CircleAvatar(
                             child: Text(
-                              (user['name'] != null &&
-                                      user['name'].toString().isNotEmpty)
-                                  ? user['name'].toString()[0].toUpperCase()
-                                  : "?",
+                              name.isNotEmpty ? name[0].toUpperCase() : "?",
                             ),
                           ),
-                          title: Text(user['name'] ?? "No Name"),
+                          title: Text(name),
                           subtitle: Text("ID: $userId | $phone"),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              // መደወያ ቁልፍ (Call Button)
                               IconButton(
                                 icon: const Icon(
                                   Icons.call,
@@ -171,20 +205,17 @@ class _UserManagementPageState extends State<UserManagementPage> {
                                 ),
                                 onPressed: () async {
                                   final Uri url = Uri.parse('tel:$phone');
-                                  if (await canLaunchUrl(url)) {
+                                  if (await canLaunchUrl(url))
                                     await launchUrl(url);
-                                  }
                                 },
                               ),
+                              const SizedBox(width: 4),
                               IconButton(
                                 icon: const Icon(
-                                  Icons.delete,
+                                  Icons.delete_forever,
                                   color: Colors.red,
                                 ),
-                                onPressed: () => FirebaseFirestore.instance
-                                    .collection('users')
-                                    .doc(userId)
-                                    .delete(),
+                                onPressed: () => _confirmDelete(userId, name),
                               ),
                             ],
                           ),

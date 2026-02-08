@@ -46,13 +46,15 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
                     )
                     .snapshots(),
                 builder: (context, snapshot) {
-                  if (!snapshot.hasData)
+                  if (!snapshot.hasData) {
                     return const Center(child: CircularProgressIndicator());
+                  }
                   var docs = snapshot.data!.docs;
-                  if (docs.isEmpty)
+                  if (docs.isEmpty) {
                     return const Center(
                       child: Text("No transactions recorded yet."),
                     );
+                  }
 
                   return ListView.builder(
                     itemCount: docs.length,
@@ -115,11 +117,12 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
                 firstDate: DateTime(2024),
                 lastDate: DateTime.now(),
               );
-              if (picked != null)
+              if (picked != null) {
                 setState(() {
                   _selectedDate = picked;
                   _timeFilter = "Custom";
                 });
+              }
             },
           ),
           DropdownButton<String>(
@@ -143,8 +146,9 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance.collection('tickets').snapshots(),
         builder: (context, snapshot) {
-          if (!snapshot.hasData)
+          if (!snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
+          }
 
           var docs = snapshot.data!.docs;
           double totalFines = 0, totalRevenue = 0;
@@ -157,17 +161,20 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
             if (data['timestamp'] == null) return true;
             DateTime docDate = (data['timestamp'] as Timestamp).toDate();
             DateTime now = DateTime.now();
-            if (_timeFilter == 'Today')
+            if (_timeFilter == 'Today') {
               return docDate.day == now.day &&
                   docDate.month == now.month &&
                   docDate.year == now.year;
-            if (_timeFilter == 'Month')
+            }
+            if (_timeFilter == 'Month') {
               return docDate.month == now.month && docDate.year == now.year;
+            }
             if (_timeFilter == 'Year') return docDate.year == now.year;
-            if (_timeFilter == 'Custom')
+            if (_timeFilter == 'Custom') {
               return docDate.day == _selectedDate.day &&
                   docDate.month == _selectedDate.month &&
                   docDate.year == _selectedDate.year;
+            }
             return true;
           }).toList();
 
@@ -327,8 +334,9 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
             .limit(10)
             .snapshots(),
         builder: (context, snapshot) {
-          if (!snapshot.hasData)
+          if (!snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
+          }
           return ListView.builder(
             itemCount: snapshot.data!.docs.length,
             itemBuilder: (context, index) {

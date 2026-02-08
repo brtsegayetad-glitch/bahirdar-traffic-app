@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart'; // ቀን ለመጻፍ ያስፈልገናል
 
 class TicketFormPage extends StatefulWidget {
   final String officerId;
@@ -22,52 +23,129 @@ class _TicketFormPageState extends State<TicketFormPage> {
     'Overloading',
   ];
 
+  // --- 1. እዚህ ጋር ነው Verification Logic የምንጨምረው ---
+  void _verifyVehicle() async {
+    String plate = _plateController.text.trim().toUpperCase();
+    if (plate.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please enter a plate number first")),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Status for Plate: $plate"),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 300,
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('tickets')
+                .where('plate', isEqualTo: plate)
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData)
+                return const Center(child: CircularProgressIndicator());
+              var tickets = snapshot.data!.docs;
+
+              if (tickets.isEmpty) {
+                return const Center(child: Text("No violation record found."));
+              }
+
+              return ListView.builder(
+                itemCount: tickets.length,
+                itemBuilder: (context, index) {
+                  var data = tickets[index].data() as Map<String, dynamic>;
+                  bool isPaid = data['status'] == 'PAID';
+
+                  // --- ቀኑን የማንበቢያ ኮድ ---
+                  String formattedDate = "No Date";
+                  if (data['timestamp'] != null) {
+                    DateTime date = (data['timestamp'] as Timestamp).toDate();
+                    formattedDate = DateFormat(
+                      'yMMMd',
+                    ).format(date); // ለምሳሌ፡ Feb 8, 2026
+                  }
+
+                  return Card(
+                    color: isPaid ? Colors.green.shade50 : Colors.red.shade50,
+                    child: ListTile(
+                      title: Text(
+                        "${data['violation']} - ${data['amount']} ETB",
+                      ),
+                      subtitle: Text(
+                        "Status: ${data['status']}\nDate: $formattedDate",
+                      ), // ቀኑ እዚህ ይታያል
+                      trailing: Icon(
+                        isPaid ? Icons.check_circle : Icons.warning,
+                        color: isPaid ? Colors.green : Colors.red,
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("CLOSE"),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _issueTicket() async {
-    // 1. Show a loading circle so the officer knows the app is working
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => const Center(child: CircularProgressIndicator()),
     );
 
-    String ticketId = "TKT-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}";
-    
+    String ticketId =
+        "TKT-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}";
+
     try {
       await FirebaseFirestore.instance.collection('tickets').doc(ticketId).set({
         'ticketId': ticketId,
-        'plate': _plateController.text,
+        'plate': _plateController.text.toUpperCase(),
         'violation': _selectedViolation,
         'amount': double.parse(_amountController.text),
         'status': 'UNPAID',
         'officerId': widget.officerId,
-        'createdAt': FieldValue.serverTimestamp(),
+        'timestamp': FieldValue.serverTimestamp(), // ለዳሽቦርድ ማጣሪያ ይጠቅመናል
       });
 
       if (!mounted) return;
-      Navigator.pop(context); // Remove loading circle
+      Navigator.pop(context);
 
-      // 2. Show the Success Popup
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
           title: const Icon(Icons.check_circle, color: Colors.green, size: 50),
-          content: Text("Ticket Generated!\n\nID: $ticketId\nPlate: ${_plateController.text}"),
+          content: Text(
+            "Ticket Generated!\n\nID: $ticketId\nPlate: ${_plateController.text}",
+          ),
           actions: [
             TextButton(
               onPressed: () {
-                Navigator.pop(context); // Close dialog
-                _plateController.clear(); // Clear form for next ticket
+                Navigator.pop(context);
+                _plateController.clear();
                 _amountController.clear();
-              }, 
-              child: const Text("OK")
-            )
+              },
+              child: const Text("OK"),
+            ),
           ],
         ),
       );
     } catch (e) {
-      Navigator.pop(context); // Remove loading circle
+      Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Cloud Error: Check your internet or Firebase Rules")),
+        const SnackBar(content: Text("Error: Check internet or inputs")),
       );
     }
   }
@@ -120,6 +198,8 @@ class _TicketFormPageState extends State<TicketFormPage> {
               ),
             ),
             const SizedBox(height: 30),
+
+            // --- 2. እዚህ ጋር ነው በተኑን የምንጨምረው ---
             ElevatedButton(
               onPressed: _issueTicket,
               style: ElevatedButton.styleFrom(
@@ -128,6 +208,16 @@ class _TicketFormPageState extends State<TicketFormPage> {
                 foregroundColor: Colors.white,
               ),
               child: const Text("GENERATE DIGITAL TICKET"),
+            ),
+            const SizedBox(height: 15),
+            OutlinedButton.icon(
+              onPressed: _verifyVehicle,
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 50),
+                side: const BorderSide(color: Colors.blue, width: 2),
+              ),
+              icon: const Icon(Icons.verified),
+              label: const Text("VERIFY PLATE STATUS"),
             ),
           ],
         ),

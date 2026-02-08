@@ -1,234 +1,119 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+// intl was unused, removed it to fix the warning.
 import 'package:qr_flutter/qr_flutter.dart';
 
 class PaymentPage extends StatefulWidget {
-  const PaymentPage({super.key});
+  final String clerkId;
+  const PaymentPage({super.key, required this.clerkId});
 
   @override
   State<PaymentPage> createState() => _PaymentPageState();
 }
 
 class _PaymentPageState extends State<PaymentPage> {
-  final _ticketSearchController = TextEditingController();
-  final _phoneController = TextEditingController();
-  bool _ticketFound = false;
+  final _searchController = TextEditingController();
+  bool _isLoading = false;
+  List<DocumentSnapshot> _foundTickets = [];
+  bool _hasSearched = false;
 
-  // Mock data for the pilot
-  String? _foundPlate;
-  String? _foundAmount;
+  void _searchTickets() async {
+    if (_searchController.text.isEmpty) return;
+    setState(() {
+      _isLoading = true;
+      _hasSearched = true;
+      _foundTickets = [];
+    });
 
-  void _searchTicket() async {
-    if (_ticketSearchController.text.isEmpty) return;
+    String searchText = _searchController.text.trim().toUpperCase();
 
-    // Look for the ticket in the Cloud
-    var doc = await FirebaseFirestore.instance
+    var byId = await FirebaseFirestore.instance
         .collection('tickets')
-        .doc(_ticketSearchController.text)
+        .doc(searchText)
         .get();
 
-    if (doc.exists) {
+    if (byId.exists) {
       setState(() {
-        _ticketFound = true;
-        _foundPlate = doc.data()!['plate'];
-        _foundAmount = doc.data()!['amount'].toString();
+        _foundTickets = [byId];
+        _isLoading = false;
       });
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Ticket Not Found in System")),
-      );
+      var byPlate = await FirebaseFirestore.instance
+          .collection('tickets')
+          .where('plate', isEqualTo: searchText)
+          .where('status', isEqualTo: 'UNPAID')
+          .get();
+
+      setState(() {
+        _foundTickets = byPlate.docs;
+        _isLoading = false;
+      });
     }
   }
 
-  void _updateStatusInCloud(String method) async {
-    // Update the ticket to 'PAID' so the supervisor knows
+  void _processPayment(DocumentSnapshot ticket, String method) async {
+    String ticketId = ticket.id;
+    double amount = (ticket['amount'] ?? 0).toDouble();
+    String plate = ticket['plate'];
+    String receiptNo =
+        "BD-REV-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}";
+
     await FirebaseFirestore.instance
         .collection('tickets')
-        .doc(_ticketSearchController.text)
-        .update({'status': 'PAID', 'paymentMethod': method});
+        .doc(ticketId)
+        .update({
+          'status': 'PAID',
+          'paymentMethod': method,
+          'paymentDate': FieldValue.serverTimestamp(),
+          'clerkId': widget.clerkId,
+          'receiptNo': receiptNo,
+        });
 
-    _processPayment(method); // Show the receipt popup
-  }
-
-  void _showTelebirrPrompt() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Telebirr Payment Push"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text("The driver will enter their PIN on their own phone."),
-            const SizedBox(height: 15),
-            TextField(
-              controller: _phoneController,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: "Driver Phone Number",
-                hintText: "09...",
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.phone),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("CANCEL"),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _simulatingWaitingForDriver();
-            },
-            child: const Text("SEND REQUEST"),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _simulatingWaitingForDriver() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const AlertDialog(
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 20),
-            Text(
-              "Waiting for Driver PIN...",
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            Text(
-              "Driver is confirming on their phone",
-              style: TextStyle(fontSize: 12),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    Future.delayed(const Duration(seconds: 3), () {
-      Navigator.pop(context);
-      _updateStatusInCloud(
-        'Telebirr',
-      ); // Changed from _processPayment to _updateStatusInCloud
+    await FirebaseFirestore.instance.collection('audit_logs').add({
+      'action': 'PAYMENT_COLLECTED',
+      'ticketId': ticketId,
+      'amount': amount,
+      'clerkId': widget.clerkId,
+      'method': method,
+      'timestamp': FieldValue.serverTimestamp(),
+      'receiptNo': receiptNo,
     });
+
+    _showReceipt(receiptNo, plate, amount, method, ticketId);
   }
 
-  void _processPayment(String method) async {
-    // 1. Get the current date and time
-    DateTime now = DateTime.now();
-
-    // Format: "Feb 7, 2026 - 10:30 AM"
-    String formattedDate =
-        "${now.day}/${now.month}/${now.year} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
-
-    // Create a unique Receipt Number
-    String receiptNo =
-        "BD-REV-${now.millisecondsSinceEpoch.toString().substring(5)}";
-
-    // 2. Data "Baked" into the QR Code for verification
-    String qrData =
-        """
-  OFFICIAL RECEIPT
-  Receipt: $receiptNo
-  Ticket: ${_ticketSearchController.text}
-  Plate: $_foundPlate
-  Date: $formattedDate
-  Status: PAID via $method
-  """;
-
+  void _showReceipt(
+    String receiptNo,
+    String plate,
+    double amount,
+    String method,
+    String tId,
+  ) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Center(
-          child: Text(
-            "OFFICIAL DIGITAL RECEIPT",
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                "Bahir Dar City Revenue Authority",
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-              const SizedBox(height: 5),
-              Text(formattedDate, style: const TextStyle(fontSize: 12)),
-              const Divider(),
-
-              // THE QR CODE
-              Container(
-                alignment: Alignment.center,
-                width: 180,
-                height: 180,
-                child: QrImageView(
-                  data: qrData,
-                  version: QrVersions.auto,
-                  size: 180.0,
-                  gapless: false,
-                  eyeStyle: const QrEyeStyle(
-                    eyeShape: QrEyeShape.square,
-                    color: Colors.black,
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 10),
-              Text(
-                "Receipt No: $receiptNo",
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: 'monospace',
-                ),
-              ),
-              Text("Plate: $_foundPlate", style: const TextStyle(fontSize: 14)),
-              const Divider(),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text("Total Paid:"),
-                  Text(
-                    "$_foundAmount ETB",
-                    style: const TextStyle(
-                      color: Colors.green,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 15),
-              const Text(
-                "SCAN TO VERIFY RECORD",
-                style: TextStyle(
-                  fontSize: 10,
-                  color: Colors.blue,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
+        title: const Center(child: Text("OFFICIAL RECEIPT")),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            QrImageView(data: receiptNo, size: 150),
+            Text(
+              "Receipt: $receiptNo",
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const Divider(),
+            Text("Plate: $plate"),
+            Text("Amount: $amount ETB"),
+            Text("Method: $method"),
+          ],
         ),
         actions: [
-          IconButton(icon: const Icon(Icons.share), onPressed: () {}),
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              setState(() {
-                _ticketFound = false;
-                _ticketSearchController.clear();
-              });
+              _searchTickets();
             },
-            child: const Text("CLOSE & FINISH"),
+            child: const Text("DONE"),
           ),
         ],
       ),
@@ -239,64 +124,148 @@ class _PaymentPageState extends State<PaymentPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Bureau Payment"),
-        backgroundColor: Colors.green[700],
+        title: Text("Clerk: ${widget.clerkId}"),
+        backgroundColor: Colors.green.shade800,
         foregroundColor: Colors.white,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            TextField(
-              controller: _ticketSearchController,
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: TextField(
+              controller: _searchController,
               decoration: InputDecoration(
-                labelText: "Enter Ticket ID",
-                suffixIcon: IconButton(
-                  onPressed: _searchTicket,
-                  icon: const Icon(Icons.search),
-                ),
+                hintText: "Search Ticket ID or Plate Number...",
+                prefixIcon: const Icon(Icons.search),
                 border: const OutlineInputBorder(),
               ),
+              onSubmitted: (_) => _searchTickets(),
             ),
-            const SizedBox(height: 30),
-            if (_ticketFound) ...[
-              Card(
-                color: Colors.green[50],
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    children: [
-                      ListTile(
-                        title: const Text("Vehicle Plate"),
-                        subtitle: Text(_foundPlate!),
-                      ),
-                      ListTile(
-                        title: const Text("Total Fine"),
-                        subtitle: Text("ETB $_foundAmount"),
-                      ),
-                      const SizedBox(height: 10),
-                      ElevatedButton.icon(
-                        onPressed: _showTelebirrPrompt,
-                        icon: const Icon(Icons.phonelink_ring),
-                        label: const Text("PAY VIA TELEBIRR PUSH"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blue[900],
-                          foregroundColor: Colors.white,
-                          minimumSize: const Size(double.infinity, 50),
+          ),
+          if (_isLoading) const CircularProgressIndicator(),
+          Expanded(
+            child: _foundTickets.isEmpty && _hasSearched
+                ? const Center(child: Text("No Unpaid Tickets Found"))
+                : ListView.builder(
+                    itemCount: _foundTickets.length,
+                    itemBuilder: (context, index) {
+                      var tkt = _foundTickets[index];
+                      return Card(
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
                         ),
-                      ),
-                      const SizedBox(height: 10),
-                      TextButton(
-                        onPressed: () =>
-                            _updateStatusInCloud('Cash'), // Changed this too
-                        child: const Text("Or Pay with Cash"),
-                      ),
-                    ],
+                        child: ListTile(
+                          title: Text("Plate: ${tkt['plate']}"),
+                          subtitle: Text("Fine: ${tkt['amount']} ETB"),
+                          trailing: ElevatedButton(
+                            onPressed: () => _showPaymentOptions(tkt),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                            ),
+                            child: const Text(
+                              "PAY",
+                              style: TextStyle(color: Colors.white),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: OutlinedButton.icon(
+              onPressed: _showClerkHistory,
+              icon: const Icon(Icons.history),
+              label: const Text("MY TODAY'S COLLECTION"),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPaymentOptions(DocumentSnapshot tkt) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const ListTile(
+            title: Text(
+              "Select Payment Method",
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.phone_android, color: Colors.blue),
+            title: const Text("Telebirr"),
+            // FIXED: Changed onPressed to onTap
+            onTap: () {
+              Navigator.pop(context);
+              _processPayment(tkt, "Telebirr");
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.account_balance, color: Colors.purple),
+            title: const Text("Bank Transfer"),
+            onTap: () {
+              Navigator.pop(context);
+              _processPayment(tkt, "Bank Transfer");
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.money, color: Colors.green),
+            title: const Text("Cash"),
+            // FIXED: Changed onPressed to onTap
+            onTap: () {
+              Navigator.pop(context);
+              _processPayment(tkt, "Cash");
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showClerkHistory() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SizedBox(
+        height: 500,
+        child: StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('tickets')
+              .where('clerkId', isEqualTo: widget.clerkId)
+              .where('status', isEqualTo: 'PAID')
+              .snapshots(),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            var myDocs = snapshot.data!.docs;
+            return Column(
+              children: [
+                const Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: Text(
+                    "Today's Collection",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                 ),
-              ),
-            ],
-          ],
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: myDocs.length,
+                    itemBuilder: (context, index) => ListTile(
+                      title: Text("Plate: ${myDocs[index]['plate']}"),
+                      trailing: Text("${myDocs[index]['amount']} ETB"),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );

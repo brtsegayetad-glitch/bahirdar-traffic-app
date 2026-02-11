@@ -140,7 +140,13 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
   }
 
   // --- 3. PROCESS PAYMENT LOGIC ---
-  void _processPayment(String docId, Map<String, dynamic> ticketData) async {
+  // --- REPLACE YOUR OLD _processPayment WITH THIS ---
+  void _processPayment(
+    String docId,
+    Map<String, dynamic> ticketData,
+    String paymentMethod,
+  ) async {
+    // 1. Show loading
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -148,22 +154,27 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
     );
 
     try {
+      // 2. Update Firebase with the Payment Method
       await FirebaseFirestore.instance.collection('tickets').doc(docId).update({
         'status': 'PAID',
         'paidAt': FieldValue.serverTimestamp(),
         'processedByClerk': widget.clerkId,
+        'paymentMethod': paymentMethod, // <--- IMPORTANT LOGIC ADDED HERE
       });
 
-      Navigator.pop(context); // Close loading
+      Navigator.pop(context); // Close loading dialog
+      Navigator.pop(context); // Close the selection dialog (added in next step)
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Payment Confirmed!")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Payment via $paymentMethod Confirmed!")),
+      );
 
-      // Auto-print receipt
-      _generateDigitalReceipt(ticketData);
+      // 3. Add method to ticketData for the receipt and print
+      Map<String, dynamic> receiptData = Map.from(ticketData);
+      receiptData['paymentMethod'] = paymentMethod;
+      _generateDigitalReceipt(receiptData);
     } catch (e) {
-      Navigator.pop(context);
+      Navigator.pop(context); // Close loading
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text("Error: $e")));
@@ -216,8 +227,9 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
                     .orderBy('timestamp', descending: true)
                     .snapshots(),
                 builder: (context, snapshot) {
-                  if (!snapshot.hasData)
+                  if (!snapshot.hasData) {
                     return const Center(child: CircularProgressIndicator());
+                  }
 
                   var docs = snapshot.data!.docs;
 
@@ -436,6 +448,57 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
     );
   }
 
+  void _showPaymentMethodDialog(String docId, Map<String, dynamic> data) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Select Payment Method"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _paymentOptionTile(
+              docId,
+              data,
+              "CASH",
+              Icons.payments,
+              Colors.green,
+            ),
+            _paymentOptionTile(
+              docId,
+              data,
+              "TELEBIRR",
+              Icons.phone_android,
+              Colors.blue,
+            ),
+            _paymentOptionTile(
+              docId,
+              data,
+              "BANK TRANSFER",
+              Icons.account_balance,
+              Colors.purple,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _paymentOptionTile(
+    String docId,
+    Map<String, dynamic> data,
+    String method,
+    IconData icon,
+    Color color,
+  ) {
+    return ListTile(
+      leading: Icon(icon, color: color, size: 30),
+      title: Text(method, style: const TextStyle(fontWeight: FontWeight.bold)),
+      onTap: () {
+        _processPayment(docId, data, method);
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -490,8 +553,9 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
                   .where('status', isEqualTo: 'UNPAID')
                   .snapshots(),
               builder: (context, snapshot) {
-                if (!snapshot.hasData)
+                if (!snapshot.hasData) {
                   return const Center(child: CircularProgressIndicator());
+                }
 
                 var results = snapshot.data!.docs;
 
@@ -563,8 +627,10 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
                             ),
                             const Divider(height: 25),
                             ElevatedButton.icon(
-                              onPressed: () =>
-                                  _processPayment(results[index].id, data),
+                              onPressed: () => _showPaymentMethodDialog(
+                                results[index].id,
+                                data,
+                              ),
                               icon: const Icon(Icons.payment),
                               label: const Text(
                                 "PROCESS PAYMENT & PRINT RECEIPT",

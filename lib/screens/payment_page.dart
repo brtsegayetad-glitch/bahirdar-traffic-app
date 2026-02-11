@@ -75,6 +75,7 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
   // --- 1. GENERATE DIGITAL RECEIPT (Updated with Full QR Data) ---
   Future<void> _generateDigitalReceipt(Map<String, dynamic> data) async {
     final pdf = pw.Document();
+    final String formattedDate = DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now());
 
     // This string is what the QR code will show when scanned
     String qrData =
@@ -82,7 +83,8 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
         "Plate: ${data['plate']}\n"
         "Violation: ${data['violation']}\n"
         "Amount: ${data['amount']} ETB\n"
-        "Status: PAID";
+        "Status: PAID\n"
+        "Paid On: $formattedDate";
 
     pdf.addPage(
       pw.Page(
@@ -118,7 +120,7 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
                   ['Amount', '${data['amount']} ETB'],
                   [
                     'Date',
-                    (DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now())),
+                    formattedDate,
                   ],
                   ['Clerk', widget.clerkId],
                 ],

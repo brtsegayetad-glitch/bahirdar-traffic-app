@@ -11,80 +11,108 @@ class SupervisorDashboard extends StatefulWidget {
 }
 
 class _SupervisorDashboardState extends State<SupervisorDashboard> {
-  String _timeFilter = 'Today';
-  DateTime _selectedDate = DateTime.now();
+  // Start with 'Today' range
+  DateTime _startDate = DateTime(
+    DateTime.now().year,
+    DateTime.now().month,
+    DateTime.now().day,
+  );
+  DateTime _endDate = DateTime(
+    DateTime.now().year,
+    DateTime.now().month,
+    DateTime.now().day,
+    23,
+    59,
+    59,
+  );
 
-  // የሰራተኛውን ዝርዝር ስራ የሚያሳይ Popup (Detailed Report)
+  // Helper to update range from predefined buttons
+  void _updateRange(int days) {
+    setState(() {
+      _endDate = DateTime.now();
+      _startDate = DateTime.now().subtract(Duration(days: days));
+      // Reset time to start of day for accuracy
+      _startDate = DateTime(_startDate.year, _startDate.month, _startDate.day);
+    });
+  }
+
   void _showStaffDetails(String staffId, String role, String name) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
       ),
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.8,
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            Text(
-              "Activity Report: $name",
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            Text(
-              "ID: $staffId | Role: ${role.toUpperCase()}",
-              style: const TextStyle(color: Colors.grey),
-            ),
-            const Divider(),
-            Expanded(
-              child: StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('tickets')
-                    .where(
-                      role == 'officer' ? 'officerId' : 'clerkId',
-                      isEqualTo: staffId,
-                    )
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  if (!snapshot.hasData) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  var docs = snapshot.data!.docs;
-                  if (docs.isEmpty) {
-                    return const Center(
-                      child: Text("No transactions recorded yet."),
-                    );
-                  }
-
-                  return ListView.builder(
-                    itemCount: docs.length,
-                    itemBuilder: (context, index) {
-                      var data = docs[index].data() as Map<String, dynamic>;
-                      return Card(
-                        child: ListTile(
-                          leading: const Icon(
-                            Icons.receipt_long,
-                            color: Colors.blueGrey,
-                          ),
-                          title: Text("Plate: ${data['plate']}"),
-                          subtitle: Text(
-                            "Amount: ${data['amount']} ETB | Status: ${data['status']}",
-                          ),
-                          trailing: Text(
-                            data['timestamp'] != null
-                                ? DateFormat('MMM d').format(
-                                    (data['timestamp'] as Timestamp).toDate(),
-                                  )
-                                : "",
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                },
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.8,
+        expand: false,
+        builder: (context, scrollController) => Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              Text(
+                "Activity: $name",
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
-          ],
+              Text(
+                "Filter: ${DateFormat('yMMMd').format(_startDate)} - ${DateFormat('yMMMd').format(_endDate)}",
+                style: const TextStyle(color: Colors.grey),
+              ),
+              const Divider(),
+              Expanded(
+                child: StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('tickets')
+                      .where(
+                        role == 'officer' ? 'officerId' : 'processedByClerk',
+                        isEqualTo: staffId,
+                      )
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData)
+                      return const Center(child: CircularProgressIndicator());
+
+                    // Filter by date locally to match the dashboard range
+                    var docs = snapshot.data!.docs.where((doc) {
+                      var ts = doc['timestamp'] as Timestamp?;
+                      if (ts == null) return false;
+                      return ts.toDate().isAfter(_startDate) &&
+                          ts.toDate().isBefore(_endDate);
+                    }).toList();
+
+                    if (docs.isEmpty)
+                      return const Center(
+                        child: Text("No records for this period."),
+                      );
+
+                    return ListView.builder(
+                      controller: scrollController,
+                      itemCount: docs.length,
+                      itemBuilder: (context, index) {
+                        var data = docs[index].data() as Map<String, dynamic>;
+                        return Card(
+                          child: ListTile(
+                            title: Text("Plate: ${data['plate']}"),
+                            subtitle: Text(
+                              "Amt: ${data['amount']} ETB | Status: ${data['status']}",
+                            ),
+                            trailing: Text(
+                              DateFormat('MMM d').format(
+                                (data['timestamp'] as Timestamp).toDate(),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -93,8 +121,9 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[100],
       appBar: AppBar(
-        title: const Text("BUREAU OVERSIGHT & COMMAND"),
+        title: const Text("COMMAND CENTER"),
         backgroundColor: Colors.blue.shade900,
         foregroundColor: Colors.white,
         actions: [
@@ -106,90 +135,64 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
                 builder: (context) => const UserManagementPage(),
               ),
             ),
-            tooltip: "Staff Management",
           ),
           IconButton(
-            icon: const Icon(Icons.calendar_month),
+            icon: const Icon(Icons.date_range),
             onPressed: () async {
-              DateTime? picked = await showDatePicker(
+              DateTimeRange? picked = await showDateRangePicker(
                 context: context,
-                initialDate: _selectedDate,
                 firstDate: DateTime(2024),
                 lastDate: DateTime.now(),
+                initialDateRange: DateTimeRange(
+                  start: _startDate,
+                  end: _endDate,
+                ),
               );
               if (picked != null) {
                 setState(() {
-                  _selectedDate = picked;
-                  _timeFilter = "Custom";
+                  _startDate = picked.start;
+                  _endDate = picked.end.add(
+                    const Duration(hours: 23, minutes: 59),
+                  );
                 });
               }
             },
-          ),
-          DropdownButton<String>(
-            value: _timeFilter == "Custom" ? null : _timeFilter,
-            hint: const Text(
-              "Filter",
-              style: TextStyle(color: Colors.white, fontSize: 12),
-            ),
-            dropdownColor: Colors.blue.shade800,
-            style: const TextStyle(color: Colors.white),
-            underline: Container(),
-            items: <String>['Today', 'Month', 'Year'].map((String value) {
-              return DropdownMenuItem<String>(value: value, child: Text(value));
-            }).toList(),
-            onChanged: (newValue) => setState(() {
-              _timeFilter = newValue!;
-            }),
           ),
         ],
       ),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance.collection('tickets').snapshots(),
         builder: (context, snapshot) {
-          if (!snapshot.hasData) {
+          if (!snapshot.hasData)
             return const Center(child: CircularProgressIndicator());
-          }
 
-          var docs = snapshot.data!.docs;
+          var allDocs = snapshot.data!.docs;
+
+          // Apply Date Range Filter
+          var filteredDocs = allDocs.where((doc) {
+            var data = doc.data() as Map<String, dynamic>;
+            if (data['timestamp'] == null) return false;
+            DateTime docDate = (data['timestamp'] as Timestamp).toDate();
+            return docDate.isAfter(_startDate) && docDate.isBefore(_endDate);
+          }).toList();
+
           double totalFines = 0, totalRevenue = 0;
           int paidCount = 0, unpaidCount = 0;
           Map<String, int> officerStats = {};
-          Map<String, double> methodStats = {};
-
-          var filteredDocs = docs.where((doc) {
-            var data = doc.data() as Map<String, dynamic>;
-            if (data['timestamp'] == null) return true;
-            DateTime docDate = (data['timestamp'] as Timestamp).toDate();
-            DateTime now = DateTime.now();
-            if (_timeFilter == 'Today') {
-              return docDate.day == now.day &&
-                  docDate.month == now.month &&
-                  docDate.year == now.year;
-            }
-            if (_timeFilter == 'Month') {
-              return docDate.month == now.month && docDate.year == now.year;
-            }
-            if (_timeFilter == 'Year') return docDate.year == now.year;
-            if (_timeFilter == 'Custom') {
-              return docDate.day == _selectedDate.day &&
-                  docDate.month == _selectedDate.month &&
-                  docDate.year == _selectedDate.year;
-            }
-            return true;
-          }).toList();
+          Map<String, double> clerkStats = {}; // Tracks money per clerk
 
           for (var doc in filteredDocs) {
             var data = doc.data() as Map<String, dynamic>;
             double amount = (data['amount'] ?? 0.0).toDouble();
             String status = data['status'] ?? 'UNPAID';
             String officer = data['officerId'] ?? 'Unknown';
-            String method = data['paymentMethod'] ?? 'None';
+            String clerk = data['processedByClerk'] ?? 'System/Unpaid';
 
             totalFines += amount;
             if (status == 'PAID') {
               totalRevenue += amount;
               paidCount++;
-              methodStats[method] = (methodStats[method] ?? 0) + amount;
+              clerkStats[clerk] = (clerkStats[clerk] ?? 0) + amount;
             } else {
               unpaidCount++;
             }
@@ -201,39 +204,65 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  "View: ${_timeFilter == 'Custom' ? DateFormat('yMMMd').format(_selectedDate) : _timeFilter}",
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blueGrey,
+                // Quick Filter Chips
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    ActionChip(
+                      label: const Text("Today"),
+                      onPressed: () => _updateRange(0),
+                    ),
+                    ActionChip(
+                      label: const Text("7 Days"),
+                      onPressed: () => _updateRange(7),
+                    ),
+                    ActionChip(
+                      label: const Text("30 Days"),
+                      onPressed: () => _updateRange(30),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Center(
+                  child: Text(
+                    "Interval: ${DateFormat('yMMMd').format(_startDate)} - ${DateFormat('yMMMd').format(_endDate)}",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue,
+                    ),
                   ),
                 ),
-                const SizedBox(height: 15),
+                const SizedBox(height: 20),
 
-                _buildStatCard(
-                  "Total Fines Issued",
-                  "${totalFines.toStringAsFixed(2)} ETB",
-                  Colors.red,
-                ),
-                _buildStatCard(
-                  "Revenue Collected",
-                  "${totalRevenue.toStringAsFixed(2)} ETB",
-                  Colors.green,
-                ),
-
+                // Main Stats
                 Row(
                   children: [
                     Expanded(
                       child: _buildStatCard(
-                        "Paid Tickets",
-                        "$paidCount",
-                        Colors.blue,
+                        "Fines Issued",
+                        "${totalFines.toStringAsFixed(0)} ETB",
+                        Colors.red,
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: _buildStatCard(
-                        "Pending",
+                        "Revenue",
+                        "${totalRevenue.toStringAsFixed(0)} ETB",
+                        Colors.green,
+                      ),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildStatCard("Paid", "$paidCount", Colors.blue),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _buildStatCard(
+                        "Unpaid",
                         "$unpaidCount",
                         Colors.orange,
                       ),
@@ -242,74 +271,24 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
                 ),
 
                 const SizedBox(height: 30),
-                const Text(
-                  "OFFICER PERFORMANCE (Click to view details)",
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                const Divider(),
+                _sectionHeader("OFFICER ACTIVITY (Tickets Issued)"),
                 ...officerStats.entries.map(
-                  (e) => Card(
-                    child: ListTile(
-                      leading: const CircleAvatar(child: Icon(Icons.person)),
-                      title: FutureBuilder<DocumentSnapshot>(
-                        future: FirebaseFirestore.instance
-                            .collection('users')
-                            .doc(e.key)
-                            .get(),
-                        builder: (context, userSnap) {
-                          String name =
-                              (userSnap.hasData && userSnap.data!.exists)
-                              ? userSnap.data!['name']
-                              : e.key;
-                          return Text(
-                            name,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          );
-                        },
-                      ),
-                      subtitle: Text("Total Tickets: ${e.value}"),
-                      trailing: const Icon(Icons.arrow_forward_ios, size: 14),
-                      onTap: () async {
-                        var userDoc = await FirebaseFirestore.instance
-                            .collection('users')
-                            .doc(e.key)
-                            .get();
-                        String name = userDoc.exists ? userDoc['name'] : e.key;
-                        _showStaffDetails(e.key, 'officer', name);
-                      },
-                    ),
+                  (e) =>
+                      _buildUserTile(e.key, "Tickets: ${e.value}", 'officer'),
+                ),
+
+                const SizedBox(height: 30),
+                _sectionHeader("CLERK PERFORMANCE (Collections)"),
+                ...clerkStats.entries.map(
+                  (e) => _buildUserTile(
+                    e.key,
+                    "Collected: ${e.value.toStringAsFixed(0)} ETB",
+                    'clerk',
                   ),
                 ),
 
-                const SizedBox(height: 25),
-                const Text(
-                  "CLERK COLLECTION BY METHOD",
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                const Divider(),
-                ...methodStats.entries.map(
-                  (e) => ListTile(
-                    leading: const Icon(
-                      Icons.account_balance_wallet,
-                      color: Colors.green,
-                    ),
-                    title: Text(e.key),
-                    trailing: Text(
-                      "${e.value.toStringAsFixed(2)} ETB",
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green,
-                      ),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 25),
-                const Text(
-                  "LIVE AUDIT TRAIL",
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                const Divider(),
+                const SizedBox(height: 30),
+                _sectionHeader("LIVE AUDIT TRAIL"),
                 _buildAuditTrail(),
               ],
             ),
@@ -319,66 +298,65 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
     );
   }
 
-  Widget _buildAuditTrail() {
-    return Container(
-      height: 200,
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade300),
+  Widget _sectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Text(
+        title,
+        style: const TextStyle(
+          fontWeight: FontWeight.bold,
+          color: Colors.blueGrey,
+        ),
       ),
-      child: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('audit_logs')
-            .orderBy('timestamp', descending: true)
-            .limit(10)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          return ListView.builder(
-            itemCount: snapshot.data!.docs.length,
-            itemBuilder: (context, index) {
-              var log =
-                  snapshot.data!.docs[index].data() as Map<String, dynamic>;
-              return ListTile(
-                dense: true,
-                title: Text("${log['action']} - ${log['amount']} ETB"),
-                subtitle: Text("Ticket: ${log['ticketId']}"),
-                trailing: const Icon(
-                  Icons.check_circle,
-                  color: Colors.green,
-                  size: 16,
-                ),
-              );
-            },
-          );
-        },
-      ),
+    );
+  }
+
+  Widget _buildUserTile(String userId, String subtitle, String role) {
+    return FutureBuilder<DocumentSnapshot>(
+      future: FirebaseFirestore.instance.collection('users').doc(userId).get(),
+      builder: (context, snap) {
+        String name = (snap.hasData && snap.data!.exists)
+            ? snap.data!['name']
+            : userId;
+        return Card(
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: role == 'officer'
+                  ? Colors.blue[100]
+                  : Colors.green[100],
+              child: Icon(
+                role == 'officer' ? Icons.local_police : Icons.payments,
+                size: 20,
+              ),
+            ),
+            title: Text(
+              name,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            subtitle: Text(subtitle),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _showStaffDetails(userId, role, name),
+          ),
+        );
+      },
     );
   }
 
   Widget _buildStatCard(String title, String value, Color color) {
     return Card(
-      elevation: 3,
+      elevation: 2,
       child: Container(
         padding: const EdgeInsets.all(15),
         decoration: BoxDecoration(
-          border: Border(left: BorderSide(color: color, width: 5)),
+          border: Border(left: BorderSide(color: color, width: 4)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               title,
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-                color: Colors.black54,
-              ),
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
             ),
-            const SizedBox(height: 5),
             Text(
               value,
               style: TextStyle(
@@ -389,6 +367,63 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildAuditTrail() {
+    return Container(
+      height: 250,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('audit_logs')
+            .orderBy('timestamp', descending: true)
+            .limit(15)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData)
+            return const Center(child: CircularProgressIndicator());
+          return ListView.separated(
+            itemCount: snapshot.data!.docs.length,
+            separatorBuilder: (c, i) => const Divider(height: 1),
+            itemBuilder: (context, index) {
+              var log =
+                  snapshot.data!.docs[index].data() as Map<String, dynamic>;
+              return ListTile(
+                dense: true,
+                leading: const Icon(
+                  Icons.history_toggle_off,
+                  size: 18,
+                  color: Colors.blue,
+                ),
+                title: Text(
+                  "${log['action']}",
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                subtitle: Text(
+                  "By: ${log['userEmail'] ?? 'Unknown'}",
+                  style: const TextStyle(fontSize: 11),
+                ),
+                trailing: Text(
+                  log['timestamp'] != null
+                      ? DateFormat(
+                          'HH:mm',
+                        ).format((log['timestamp'] as Timestamp).toDate())
+                      : "",
+                  style: const TextStyle(fontSize: 10, color: Colors.grey),
+                ),
+              );
+            },
+          );
+        },
       ),
     );
   }

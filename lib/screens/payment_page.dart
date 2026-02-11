@@ -72,9 +72,17 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
     await Printing.layoutPdf(onLayout: (format) => pdf.save());
   }
 
-  // --- 2. GENERATE SINGLE RECEIPT (For one payment) ---
+  // --- 1. GENERATE DIGITAL RECEIPT (Updated with Full QR Data) ---
   Future<void> _generateDigitalReceipt(Map<String, dynamic> data) async {
     final pdf = pw.Document();
+
+    // This string is what the QR code will show when scanned
+    String qrData =
+        "Ticket ID: ${data['ticketId']}\n"
+        "Plate: ${data['plate']}\n"
+        "Violation: ${data['violation']}\n"
+        "Amount: ${data['amount']} ETB\n"
+        "Status: PAID";
 
     pdf.addPage(
       pw.Page(
@@ -87,16 +95,16 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
                 "TRAFFIC PAYMENT RECEIPT",
                 style: pw.TextStyle(
                   fontWeight: pw.FontWeight.bold,
-                  fontSize: 12,
+                  fontSize: 14,
                 ),
               ),
               pw.Divider(),
               pw.SizedBox(height: 10),
               pw.BarcodeWidget(
                 barcode: pw.Barcode.qrCode(),
-                data: data['ticketId'],
-                width: 80,
-                height: 80,
+                data: qrData, // <--- Now contains the full info!
+                width: 100,
+                height: 100,
               ),
               pw.SizedBox(height: 10),
               pw.Text("Ticket ID: ${data['ticketId']}"),
@@ -114,11 +122,6 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
                   ],
                   ['Clerk', widget.clerkId],
                 ],
-                cellStyle: const pw.TextStyle(fontSize: 9),
-                headerStyle: pw.TextStyle(
-                  fontSize: 9,
-                  fontWeight: pw.FontWeight.bold,
-                ),
               ),
               pw.SizedBox(height: 20),
               pw.Text(

@@ -106,7 +106,7 @@ class _LoginPageState extends State<LoginPage> {
             Navigator.pushReplacement(
               context,
               MaterialPageRoute(
-                builder: (context) => PaymentPage(clerkId: inputId),
+                builder: (context) => ClerkPaymentPage(clerkId: inputId),
               ),
             );
           }

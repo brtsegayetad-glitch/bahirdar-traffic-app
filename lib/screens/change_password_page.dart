@@ -64,7 +64,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => PaymentPage(clerkId: widget.userId),
+            builder: (context) => ClerkPaymentPage(clerkId: widget.userId),
           ),
         );
       }

@@ -1,329 +1,590 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
-import 'package:qr_flutter/qr_flutter.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
-class PaymentPage extends StatefulWidget {
+class ClerkPaymentPage extends StatefulWidget {
   final String clerkId;
-  const PaymentPage({super.key, required this.clerkId});
+  const ClerkPaymentPage({super.key, required this.clerkId});
 
   @override
-  State<PaymentPage> createState() => _PaymentPageState();
+  State<ClerkPaymentPage> createState() => _ClerkPaymentPageState();
 }
 
-class _PaymentPageState extends State<PaymentPage> {
+class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
   final _searchController = TextEditingController();
-  bool _isLoading = false;
-  List<DocumentSnapshot> _foundTickets = [];
-  bool _hasSearched = false;
 
-  void _searchTickets() async {
-    if (_searchController.text.isEmpty) return;
-    setState(() {
-      _isLoading = true;
-      _hasSearched = true;
-      _foundTickets = [];
-    });
+  // --- Date Filter States ---
+  DateTime _startDate = DateTime.now();
+  DateTime _endDate = DateTime.now();
 
-    String searchText = _searchController.text.trim().toUpperCase();
+  // --- 1. GENERATE SUMMARY REPORT (PDF for History) ---
+  Future<void> _generateClerkReport(List<QueryDocumentSnapshot> docs) async {
+    final pdf = pw.Document();
+    double totalCollected = 0;
 
-    var byId = await FirebaseFirestore.instance
-        .collection('tickets')
-        .doc(searchText)
-        .get();
-
-    if (byId.exists) {
-      setState(() {
-        _foundTickets = [byId];
-        _isLoading = false;
-      });
-    } else {
-      var byPlate = await FirebaseFirestore.instance
-          .collection('tickets')
-          .where('plate', isEqualTo: searchText)
-          .where('status', isEqualTo: 'UNPAID')
-          .get();
-
-      setState(() {
-        _foundTickets = byPlate.docs;
-        _isLoading = false;
-      });
+    // Calculate Total
+    for (var doc in docs) {
+      totalCollected += (doc['amount'] ?? 0);
     }
-  }
 
-  void _processPayment(DocumentSnapshot ticket, String method) async {
-    String ticketId = ticket.id;
-    double amount = (ticket['amount'] ?? 0).toDouble();
-    String plate = ticket['plate'];
-    String ownerName = ticket['ownerName'] ?? "N/A"; // ከቲኬቱ ስሙን እናነባለን
-    String receiptNo =
-        "BD-REV-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}";
-
-    DateTime now = DateTime.now();
-
-    await FirebaseFirestore.instance
-        .collection('tickets')
-        .doc(ticketId)
-        .update({
-          'status': 'PAID',
-          'paymentMethod': method,
-          'paymentDate': FieldValue.serverTimestamp(),
-          'clerkId': widget.clerkId,
-          'receiptNo': receiptNo,
-        });
-
-    await FirebaseFirestore.instance.collection('audit_logs').add({
-      'action': 'PAYMENT_COLLECTED',
-      'ticketId': ticketId,
-      'amount': amount,
-      'clerkId': widget.clerkId,
-      'method': method,
-      'timestamp': FieldValue.serverTimestamp(),
-      'receiptNo': receiptNo,
-      'ownerName': ownerName,
-    });
-
-    _showReceipt(receiptNo, plate, amount, method, now, ownerName);
-  }
-
-  void _showReceipt(
-    String receiptNo,
-    String plate,
-    double amount,
-    String method,
-    DateTime date,
-    String ownerName,
-  ) {
-    String formattedDate = DateFormat('MMM d, yyyy - h:mm a').format(date);
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Center(child: Text("OFFICIAL RECEIPT")),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            QrImageView(data: receiptNo, size: 150),
-            Text(
-              "Receipt: $receiptNo",
-              style: const TextStyle(fontWeight: FontWeight.bold),
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        build: (context) => [
+          pw.Header(level: 0, child: pw.Text("Payment Collection Report")),
+          pw.Text("Clerk ID: ${widget.clerkId}"),
+          pw.Text(
+            "Period: ${DateFormat('MMM d, y').format(_startDate)} - ${DateFormat('MMM d, y').format(_endDate)}",
+          ),
+          pw.SizedBox(height: 20),
+          pw.TableHelper.fromTextArray(
+            headers: ['Date', 'Plate', 'Ticket ID', 'Amount'],
+            data: docs.map((doc) {
+              var d = doc.data() as Map<String, dynamic>;
+              return [
+                d['paidAt'] != null
+                    ? DateFormat(
+                        'MM/dd HH:mm',
+                      ).format((d['paidAt'] as Timestamp).toDate())
+                    : 'N/A',
+                d['plate'],
+                d['ticketId'],
+                "${d['amount']} ETB",
+              ];
+            }).toList(),
+          ),
+          pw.SizedBox(height: 20),
+          pw.Divider(),
+          pw.Container(
+            alignment: pw.Alignment.centerRight,
+            child: pw.Text(
+              "TOTAL COLLECTED: ${totalCollected.toStringAsFixed(2)} ETB",
+              style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14),
             ),
-            const Divider(),
-            Text(
-              "Date: $formattedDate",
-              style: const TextStyle(color: Colors.blueGrey, fontSize: 13),
-            ),
-            const SizedBox(height: 5),
-            Text(
-              "Owner: $ownerName",
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.blue,
-              ),
-            ), // ስም ተጨምሯል
-            Text("Plate: $plate"),
-            Text("Amount: $amount ETB"),
-            Text("Method: $method"),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _searchTickets();
-            },
-            child: const Text("DONE"),
           ),
         ],
       ),
+    );
+
+    await Printing.layoutPdf(onLayout: (format) => pdf.save());
+  }
+
+  // --- 2. GENERATE SINGLE RECEIPT (For one payment) ---
+  Future<void> _generateDigitalReceipt(Map<String, dynamic> data) async {
+    final pdf = pw.Document();
+
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.roll80,
+        build: (pw.Context context) {
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.center,
+            children: [
+              pw.Text(
+                "TRAFFIC PAYMENT RECEIPT",
+                style: pw.TextStyle(
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+              pw.Divider(),
+              pw.SizedBox(height: 10),
+              pw.BarcodeWidget(
+                barcode: pw.Barcode.qrCode(),
+                data: data['ticketId'],
+                width: 80,
+                height: 80,
+              ),
+              pw.SizedBox(height: 10),
+              pw.Text("Ticket ID: ${data['ticketId']}"),
+              pw.SizedBox(height: 5),
+              pw.TableHelper.fromTextArray(
+                context: context,
+                data: <List<String>>[
+                  ['Plate', '${data['plate']}'],
+                  ['Driver', '${data['ownerName']}'],
+                  ['Violation', '${data['violation']}'],
+                  ['Amount', '${data['amount']} ETB'],
+                  [
+                    'Date',
+                    (DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now())),
+                  ],
+                  ['Clerk', widget.clerkId],
+                ],
+                cellStyle: const pw.TextStyle(fontSize: 9),
+                headerStyle: pw.TextStyle(
+                  fontSize: 9,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 20),
+              pw.Text(
+                "Thank you for complying!",
+                style: pw.TextStyle(
+                  fontStyle: pw.FontStyle.italic,
+                  fontSize: 10,
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    await Printing.layoutPdf(onLayout: (format) => pdf.save());
+  }
+
+  // --- 3. PROCESS PAYMENT LOGIC ---
+  void _processPayment(String docId, Map<String, dynamic> ticketData) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      await FirebaseFirestore.instance.collection('tickets').doc(docId).update({
+        'status': 'PAID',
+        'paidAt': FieldValue.serverTimestamp(),
+        'processedByClerk': widget.clerkId,
+      });
+
+      Navigator.pop(context); // Close loading
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Payment Confirmed!")));
+
+      // Auto-print receipt
+      _generateDigitalReceipt(ticketData);
+    } catch (e) {
+      Navigator.pop(context);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Error: $e")));
+    }
+  }
+
+  // --- 4. HISTORY MODAL (Updated with Calendar & Filters) ---
+  void _showPaymentHistory() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.grey[50],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+      ),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) {
+          return DraggableScrollableSheet(
+            initialChildSize: 0.9,
+            maxChildSize: 0.95,
+            expand: false,
+            builder: (context, scrollController) {
+              return StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('tickets')
+                    .where('status', isEqualTo: 'PAID')
+                    .where(
+                      'timestamp',
+                      isGreaterThanOrEqualTo: Timestamp.fromDate(
+                        DateTime(
+                          _startDate.year,
+                          _startDate.month,
+                          _startDate.day,
+                        ),
+                      ),
+                    )
+                    .where(
+                      'timestamp',
+                      isLessThanOrEqualTo: Timestamp.fromDate(
+                        DateTime(
+                          _endDate.year,
+                          _endDate.month,
+                          _endDate.day,
+                          23,
+                          59,
+                          59,
+                        ),
+                      ),
+                    )
+                    .orderBy('timestamp', descending: true)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData)
+                    return const Center(child: CircularProgressIndicator());
+
+                  var docs = snapshot.data!.docs;
+
+                  // Calculate live total for the UI
+                  double currentTotal = 0;
+                  for (var doc in docs) {
+                    currentTotal += (doc['amount'] ?? 0);
+                  }
+
+                  return Column(
+                    children: [
+                      // Drag Handle
+                      Container(
+                        margin: const EdgeInsets.symmetric(vertical: 12),
+                        height: 5,
+                        width: 40,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+
+                      // HEADER & FILTERS
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 15),
+                        child: Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      "PAYMENT LOGS",
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                    Text(
+                                      "Total: ${currentTotal.toStringAsFixed(0)} ETB",
+                                      style: TextStyle(
+                                        color: Colors.green[700],
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                // RED PDF BUTTON
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.picture_as_pdf,
+                                    color: Colors.red,
+                                    size: 28,
+                                  ),
+                                  onPressed: docs.isEmpty
+                                      ? null
+                                      : () => _generateClerkReport(docs),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 15),
+
+                            // DATE FILTERS
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                              children: [
+                                _filterBtn(setModalState, "Today", 0),
+                                _filterBtn(setModalState, "7 Days", 7),
+                                _filterBtn(setModalState, "30 Days", 30),
+                                _filterBtn(setModalState, "1 Year", 365),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.date_range,
+                                    color: Colors.blue,
+                                  ),
+                                  onPressed: () async {
+                                    final DateTimeRange? picked =
+                                        await showDateRangePicker(
+                                          context: context,
+                                          firstDate: DateTime(2023),
+                                          lastDate: DateTime.now(),
+                                          initialDateRange: DateTimeRange(
+                                            start: _startDate,
+                                            end: _endDate,
+                                          ),
+                                        );
+                                    if (picked != null) {
+                                      setModalState(() {
+                                        _startDate = picked.start;
+                                        _endDate = picked.end;
+                                      });
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              "Period: ${DateFormat('MMM d, y').format(_startDate)} - ${DateFormat('MMM d, y').format(_endDate)}",
+                              style: TextStyle(
+                                color: Colors.blue[800],
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                            const Divider(height: 30),
+                          ],
+                        ),
+                      ),
+
+                      // THE LIST OF PAYMENTS
+                      Expanded(
+                        child: docs.isEmpty
+                            ? const Center(
+                                child: Text(
+                                  "No payments collected in this range",
+                                ),
+                              )
+                            : ListView.builder(
+                                controller: scrollController,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 15,
+                                ),
+                                itemCount: docs.length,
+                                itemBuilder: (context, index) {
+                                  var data =
+                                      docs[index].data()
+                                          as Map<String, dynamic>;
+                                  return Card(
+                                    elevation: 0,
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      side: BorderSide(
+                                        color: Colors.grey[200]!,
+                                      ),
+                                    ),
+                                    child: ListTile(
+                                      leading: CircleAvatar(
+                                        backgroundColor: Colors.green[50],
+                                        child: const Icon(
+                                          Icons.attach_money,
+                                          color: Colors.green,
+                                        ),
+                                      ),
+                                      title: Text(
+                                        data['plate'],
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      subtitle: Text(
+                                        "ID: ${data['ticketId']} • ${data['violation']}",
+                                      ),
+                                      trailing: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.end,
+                                        children: [
+                                          Text(
+                                            "${data['amount']} ETB",
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.black,
+                                            ),
+                                          ),
+                                          Text(
+                                            data['paidAt'] != null
+                                                ? DateFormat(
+                                                    'MM/dd HH:mm',
+                                                  ).format(
+                                                    (data['paidAt']
+                                                            as Timestamp)
+                                                        .toDate(),
+                                                  )
+                                                : "",
+                                            style: const TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.grey,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  );
+                },
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  // Filter Button Helper
+  Widget _filterBtn(Function setModalState, String label, int days) {
+    bool isSelected = DateTime.now().difference(_startDate).inDays == days;
+    return ChoiceChip(
+      label: Text(label),
+      selected: isSelected,
+      onSelected: (bool selected) {
+        setModalState(() {
+          _endDate = DateTime.now();
+          _startDate = DateTime.now().subtract(Duration(days: days));
+        });
+      },
+      selectedColor: Colors.blue[100],
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[100],
       appBar: AppBar(
-        title: Text("Clerk: ${widget.clerkId}"),
-        backgroundColor: Colors.green.shade800,
+        title: const Text("Clerk Payment Portal"),
+        backgroundColor: Colors.blue.shade800,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            onPressed: _showPaymentHistory,
+            icon: const Icon(Icons.history, size: 28),
+          ),
+        ],
       ),
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
+          // Search Section
+          Container(
+            padding: const EdgeInsets.all(20),
+            color: Colors.white,
             child: TextField(
               controller: _searchController,
-              decoration: const InputDecoration(
-                hintText: "Search Ticket ID or Plate Number...",
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
-              ),
-              onSubmitted: (_) => _searchTickets(),
-            ),
-          ),
-          if (_isLoading) const CircularProgressIndicator(),
-          Expanded(
-            child: _foundTickets.isEmpty && _hasSearched
-                ? const Center(child: Text("No Unpaid Tickets Found"))
-                : ListView.builder(
-                    itemCount: _foundTickets.length,
-                    itemBuilder: (context, index) {
-                      var tkt = _foundTickets[index];
-                      return Card(
-                        margin: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        child: ListTile(
-                          title: Text("Plate: ${tkt['plate']}"),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                "Owner: ${tkt['ownerName'] ?? 'N/A'}",
-                                style: const TextStyle(color: Colors.blueGrey),
-                              ), // ክፍያ ከመቀበል በፊት ለማየት
-                              Text("Fine: ${tkt['amount']} ETB"),
-                            ],
-                          ),
-                          trailing: ElevatedButton(
-                            onPressed: () => _showPaymentOptions(tkt),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green,
-                            ),
-                            child: const Text(
-                              "PAY",
-                              style: TextStyle(color: Colors.white),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: OutlinedButton.icon(
-              onPressed: _showClerkHistory,
-              icon: const Icon(Icons.history),
-              label: const Text("MY PAYMENT HISTORY"),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showPaymentOptions(DocumentSnapshot tkt) {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const ListTile(
-            title: Text(
-              "Select Payment Method",
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ),
-          ListTile(
-            leading: const Icon(Icons.phone_android, color: Colors.blue),
-            title: const Text("Telebirr"),
-            onTap: () {
-              Navigator.pop(context);
-              _processPayment(tkt, "Telebirr");
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.account_balance, color: Colors.purple),
-            title: const Text("Bank Transfer"),
-            onTap: () {
-              Navigator.pop(context);
-              _processPayment(tkt, "Bank Transfer");
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.money, color: Colors.green),
-            title: const Text("Cash"),
-            onTap: () {
-              Navigator.pop(context);
-              _processPayment(tkt, "Cash");
-            },
-          ),
-          const SizedBox(height: 20),
-        ],
-      ),
-    );
-  }
-
-  void _showClerkHistory() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) => SizedBox(
-        height: MediaQuery.of(context).size.height * 0.7,
-        child: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('tickets')
-              .where('clerkId', isEqualTo: widget.clerkId)
-              .where('status', isEqualTo: 'PAID')
-              .orderBy('paymentDate', descending: true)
-              .snapshots(),
-          builder: (context, snapshot) {
-            if (snapshot.hasError)
-              return Center(child: Text("Error: ${snapshot.error}"));
-            if (!snapshot.hasData)
-              return const Center(child: CircularProgressIndicator());
-
-            var myDocs = snapshot.data!.docs;
-            return Column(
-              children: [
-                const Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: Text(
-                    "MY PAYMENT HISTORY",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
+              decoration: InputDecoration(
+                hintText: "Enter Plate Number (e.g. AA 12345)",
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.clear),
+                  onPressed: () => setState(() {
+                    _searchController.clear();
+                  }),
                 ),
-                Expanded(
-                  child: myDocs.isEmpty
-                      ? const Center(child: Text("No payments collected yet."))
-                      : ListView.builder(
-                          itemCount: myDocs.length,
-                          itemBuilder: (context, index) {
-                            var data =
-                                myDocs[index].data() as Map<String, dynamic>;
-                            String dateStr = "";
-                            if (data['paymentDate'] != null) {
-                              dateStr = DateFormat('MMM d, h:mm a').format(
-                                (data['paymentDate'] as Timestamp).toDate(),
-                              );
-                            }
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                filled: true,
+                fillColor: Colors.grey[50],
+              ),
+              onChanged: (val) => setState(() {}),
+            ),
+          ),
 
-                            return ListTile(
-                              leading: const Icon(
-                                Icons.receipt_long,
-                                color: Colors.green,
+          // Results Section
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('tickets')
+                  .where(
+                    'plate',
+                    isEqualTo: _searchController.text.trim().toUpperCase(),
+                  )
+                  .where('status', isEqualTo: 'UNPAID')
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData)
+                  return const Center(child: CircularProgressIndicator());
+
+                var results = snapshot.data!.docs;
+
+                if (_searchController.text.isEmpty) {
+                  return const Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.search, size: 60, color: Colors.grey),
+                        SizedBox(height: 10),
+                        Text(
+                          "Search for a vehicle to process payment",
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                if (results.isEmpty) {
+                  return const Center(
+                    child: Text("No unpaid tickets found for this plate."),
+                  );
+                }
+
+                return ListView.builder(
+                  padding: const EdgeInsets.all(15),
+                  itemCount: results.length,
+                  itemBuilder: (context, index) {
+                    var data = results[index].data() as Map<String, dynamic>;
+                    return Card(
+                      elevation: 3,
+                      margin: const EdgeInsets.only(bottom: 15),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(15),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(15),
+                        child: Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      data['plate'],
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 20,
+                                      ),
+                                    ),
+                                    Text(
+                                      "Violation: ${data['violation']}",
+                                      style: TextStyle(color: Colors.grey[700]),
+                                    ),
+                                  ],
+                                ),
+                                Text(
+                                  "${data['amount']} ETB",
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                    color: Colors.red,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const Divider(height: 25),
+                            ElevatedButton.icon(
+                              onPressed: () =>
+                                  _processPayment(results[index].id, data),
+                              icon: const Icon(Icons.payment),
+                              label: const Text(
+                                "PROCESS PAYMENT & PRINT RECEIPT",
                               ),
-                              title: Text("Plate: ${data['plate']}"),
-                              subtitle: Text(
-                                "Owner: ${data['ownerName'] ?? 'N/A'}\nDate: $dateStr",
-                              ),
-                              trailing: Text(
-                                "${data['amount']} ETB",
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green.shade700,
+                                foregroundColor: Colors.white,
+                                minimumSize: const Size(double.infinity, 50),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
                                 ),
                               ),
-                              isThreeLine: true,
-                            );
-                          },
+                            ),
+                          ],
                         ),
-                ),
-              ],
-            );
-          },
-        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

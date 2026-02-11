@@ -175,8 +175,9 @@ class _UserManagementPageState extends State<UserManagementPage> {
                     .collection('users')
                     .snapshots(),
                 builder: (context, snapshot) {
-                  if (!snapshot.hasData)
+                  if (!snapshot.hasData) {
                     return const Center(child: CircularProgressIndicator());
+                  }
                   var users = snapshot.data!.docs;
                   return ListView.builder(
                     itemCount: users.length,
@@ -205,8 +206,9 @@ class _UserManagementPageState extends State<UserManagementPage> {
                                 ),
                                 onPressed: () async {
                                   final Uri url = Uri.parse('tel:$phone');
-                                  if (await canLaunchUrl(url))
+                                  if (await canLaunchUrl(url)) {
                                     await launchUrl(url);
+                                  }
                                 },
                               ),
                               const SizedBox(width: 4),

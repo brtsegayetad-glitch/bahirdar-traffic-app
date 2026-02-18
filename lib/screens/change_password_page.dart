@@ -82,51 +82,83 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
         title: const Text("Security Update"),
         backgroundColor: Colors.orange,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          children: [
-            const Icon(Icons.security, size: 80, color: Colors.orange),
-            const SizedBox(height: 20),
-            const Text(
-              "First Time Login Detected!",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+      body: Column(
+        children: [
+           Container(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
+            color: Colors.white,
+            child: const Column(
+              children: [
+                Text(
+                  "ባህርዳር ከተማ አስተዳደር ትራፊክ ጽ/ቤት",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                ),
+                SizedBox(height: 5),
+                Text(
+                  "Bahirdar City Administration Traffic Office",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey,
+                  ),
+                ),
+              ],
             ),
-            const Text(
-              "For your privacy, please set a new password that only you know.",
-            ),
-            const SizedBox(height: 30),
-            TextField(
-              controller: _newPasswordController,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: "New Password",
-                border: OutlineInputBorder(),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                children: [
+                  const Icon(Icons.security, size: 80, color: Colors.orange),
+                  const SizedBox(height: 20),
+                  const Text(
+                    "First Time Login Detected!",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const Text(
+                    "For your privacy, please set a new password that only you know.",
+                  ),
+                  const SizedBox(height: 30),
+                  TextField(
+                    controller: _newPasswordController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: "New Password",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  TextField(
+                    controller: _confirmPasswordController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: "Confirm New Password",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 25),
+                  ElevatedButton(
+                    onPressed: _updatePassword,
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 50),
+                      backgroundColor: Colors.orange,
+                    ),
+                    child: const Text(
+                      "UPDATE & LOGIN",
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 15),
-            TextField(
-              controller: _confirmPasswordController,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: "Confirm New Password",
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 25),
-            ElevatedButton(
-              onPressed: _updatePassword,
-              style: ElevatedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 50),
-                backgroundColor: Colors.orange,
-              ),
-              child: const Text(
-                "UPDATE & LOGIN",
-                style: TextStyle(color: Colors.white),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

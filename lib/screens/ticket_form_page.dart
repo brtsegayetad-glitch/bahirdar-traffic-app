@@ -453,6 +453,25 @@ class _TicketFormPageState extends State<TicketFormPage> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            const Text(
+              "ባህርዳር ከተማ አስተዳደር ትራፊክ ጽ/ቤት",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 5),
+            const Text(
+              "Bahirdar City Administration Traffic Office",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey,
+              ),
+            ),
+            const SizedBox(height: 10),
             const Icon(Icons.qr_code_2, size: 80, color: Colors.black),
             const Text("OFFICIAL TICKET",
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
@@ -504,83 +523,115 @@ class _TicketFormPageState extends State<TicketFormPage> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            const Text(
-              "ISSUE NEW VIOLATION",
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+      body: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
+            color: Colors.white,
+            child: const Column(
+              children: [
+                Text(
+                  "ባህርዳር ከተማ አስተዳደር ትራፊክ ጽ/ቤት",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                ),
+                SizedBox(height: 5),
+                Text(
+                  "Bahirdar City Administration Traffic Office",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 20),
-            TextField(
-              controller: _plateController,
-              decoration: const InputDecoration(
-                labelText: "Plate Number",
-                border: OutlineInputBorder(),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  const Text(
+                    "ISSUE NEW VIOLATION",
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                  ),
+                  const SizedBox(height: 20),
+                  TextField(
+                    controller: _plateController,
+                    decoration: const InputDecoration(
+                      labelText: "Plate Number",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  TextField(
+                    controller: _ownerNameController,
+                    decoration: const InputDecoration(
+                      labelText: "Driver Name",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  TextField(
+                    controller: _ownerPhoneController,
+                    keyboardType: TextInputType.phone,
+                    decoration: const InputDecoration(
+                      labelText: "Phone",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  DropdownButtonFormField(
+                    initialValue: _selectedViolation,
+                    decoration: const InputDecoration(
+                      labelText: "Violation Type",
+                      border: OutlineInputBorder(),
+                    ),
+                    items: _violations
+                        .map((v) => DropdownMenuItem(value: v, child: Text(v)))
+                        .toList(),
+                    onChanged: (val) => setState(() => _selectedViolation = val!),
+                  ),
+                  const SizedBox(height: 15),
+                  TextField(
+                    controller: _amountController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "Fine Amount (ETB)",
+                      prefixText: "ETB ",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 25),
+                  ElevatedButton(
+                    onPressed: _issueTicket,
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 60),
+                      backgroundColor: Colors.orange[800],
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text("GENERATE DIGITAL TICKET"),
+                  ),
+                  const SizedBox(height: 15),
+                  OutlinedButton.icon(
+                    onPressed: _verifyVehicle,
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 50),
+                    ),
+                    icon: const Icon(Icons.verified),
+                    label: const Text("VERIFY PLATE STATUS"),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 15),
-            TextField(
-              controller: _ownerNameController,
-              decoration: const InputDecoration(
-                labelText: "Driver Name",
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 15),
-            TextField(
-              controller: _ownerPhoneController,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: "Phone",
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 15),
-            DropdownButtonFormField(
-              initialValue: _selectedViolation,
-              decoration: const InputDecoration(
-                labelText: "Violation Type",
-                border: OutlineInputBorder(),
-              ),
-              items: _violations
-                  .map((v) => DropdownMenuItem(value: v, child: Text(v)))
-                  .toList(),
-              onChanged: (val) => setState(() => _selectedViolation = val!),
-            ),
-            const SizedBox(height: 15),
-            TextField(
-              controller: _amountController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: "Fine Amount (ETB)",
-                prefixText: "ETB ",
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 25),
-            ElevatedButton(
-              onPressed: _issueTicket,
-              style: ElevatedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 60),
-                backgroundColor: Colors.orange[800],
-                foregroundColor: Colors.white,
-              ),
-              child: const Text("GENERATE DIGITAL TICKET"),
-            ),
-            const SizedBox(height: 15),
-            OutlinedButton.icon(
-              onPressed: _verifyVehicle,
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 50),
-              ),
-              icon: const Icon(Icons.verified),
-              label: const Text("VERIFY PLATE STATUS"),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
-} 
+}

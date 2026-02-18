@@ -37,6 +37,8 @@ dependencies:
   printing: ^5.11.0
   cupertino_icons: ^1.0.8
   url_launcher: ^6.3.0  # <--- Add this line
+  file_picker: ^10.3.10
+  share_plus: ^12.0.1
 dev_dependencies:
   flutter_test:
     sdk: flutter

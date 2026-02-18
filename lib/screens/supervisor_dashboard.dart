@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'user_management_page.dart';
+import '../pdf_saver.dart';
 
 class SupervisorDashboard extends StatefulWidget {
   const SupervisorDashboard({super.key});
@@ -11,7 +14,6 @@ class SupervisorDashboard extends StatefulWidget {
 }
 
 class _SupervisorDashboardState extends State<SupervisorDashboard> {
-  // Start with 'Today' range logic preserved
   DateTime _startDate = DateTime(
     DateTime.now().year,
     DateTime.now().month,
@@ -29,7 +31,29 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
     59,
   );
 
-  // Helper to update range from predefined buttons - Includes 1 Year
+  final Map<String, String> _userNamesCache = {};
+
+  Future<String> _getUserName(String userId) async {
+    if (_userNamesCache.containsKey(userId)) {
+      return _userNamesCache[userId]!;
+    }
+    if (userId == 'Pending' || userId == 'Unknown') return userId;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .get();
+      if (doc.exists) {
+        final name = doc.data()?['name'] ?? userId;
+        _userNamesCache[userId] = name;
+        return name;
+      }
+      return userId;
+    } catch (e) {
+      return userId;
+    }
+  }
+
   void _updateRange(int days) {
     setState(() {
       DateTime now = DateTime.now();
@@ -44,7 +68,6 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
     });
   }
 
-  // Preservation of existing logic: Staff Details Popup
   void _showStaffDetails(String staffId, String role, String name) {
     showModalBottomSheet(
       context: context,
@@ -85,13 +108,11 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
                       return const Center(child: CircularProgressIndicator());
                     }
 
-                    // Strict Date Filtering in Memory
                     var docs = snapshot.data!.docs.where((doc) {
                       var data = doc.data() as Map<String, dynamic>;
                       if (data['timestamp'] == null) return false;
                       DateTime d = (data['timestamp'] as Timestamp).toDate();
 
-                      // Using !isBefore and !isAfter to cover the exact boundaries
                       return !d.isBefore(_startDate) && !d.isAfter(_endDate);
                     }).toList();
 
@@ -131,6 +152,65 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
         ),
       ),
     );
+  }
+
+  Future<void> _generatePdfReport({
+    required double totalFines,
+    required double totalRevenue,
+    required int paidCount,
+    required int unpaidCount,
+    required double cashTotal,
+    required double telebirrTotal,
+    required double bankTotal,
+    required Map<String, int> officerStats,
+    required Map<String, double> clerkStats,
+  }) async {
+    final pdf = pw.Document();
+
+    final auditLogs = await FirebaseFirestore.instance
+        .collection('audit_logs')
+        .where('timestamp', isGreaterThanOrEqualTo: _startDate)
+        .where('timestamp', isLessThanOrEqualTo: _endDate)
+        .orderBy('timestamp', descending: true)
+        .get();
+
+    final List<Map<String, dynamic>> printableLogs = auditLogs.docs
+        .map((doc) => doc.data())
+        .toList();
+
+    for (var entry in officerStats.entries) {
+      await _getUserName(entry.key);
+    }
+    for (var entry in clerkStats.entries) {
+      await _getUserName(entry.key);
+    }
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(32),
+        build: (pw.Context context) {
+          return [
+            _buildPdfHeader(context),
+            _buildPdfSummary(totalFines, totalRevenue, paidCount, unpaidCount),
+            _buildPdfPaymentChannels(cashTotal, telebirrTotal, bankTotal),
+            _buildPdfUserPerformance(
+              'Officer Performance (Tickets Issued)',
+              officerStats,
+            ),
+            _buildPdfUserPerformance(
+              'Clerk Performance (Collections)',
+              clerkStats,
+            ),
+            _buildPdfAuditTrail('Live Audit Trail', printableLogs),
+          ];
+        },
+      ),
+    );
+
+    final bytes = await pdf.save();
+    final reportName = "Report_${DateFormat('yyyy-MM-dd').format(_startDate)}.pdf";
+    await savePdf(bytes, reportName);
   }
 
   @override
@@ -194,23 +274,18 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
 
           var allDocs = snapshot.data!.docs;
 
-          // Filter by Date Range (Preserving Interval Logic)
           var filteredDocs = allDocs.where((doc) {
             var data = doc.data() as Map<String, dynamic>;
             if (data['timestamp'] == null) return false;
             DateTime docDate = (data['timestamp'] as Timestamp).toDate();
-            // Robust check
             return !docDate.isBefore(_startDate) && !docDate.isAfter(_endDate);
           }).toList();
 
           double totalFines = 0, totalRevenue = 0;
           int paidCount = 0, unpaidCount = 0;
-
-          // Payment Method Counters
           double cashTotal = 0;
           double telebirrTotal = 0;
           double bankTotal = 0;
-
           Map<String, int> officerStats = {};
           Map<String, double> clerkStats = {};
 
@@ -220,8 +295,6 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
             String status = (data['status'] ?? 'UNPAID')
                 .toString()
                 .toUpperCase();
-
-            // --- FIX: Check both 'officerId' AND 'officer' to ensure we capture the ID ---
             String officer = data['officerId'] ?? data['officer'] ?? 'Unknown';
             String clerk = data['processedByClerk'] ?? 'Pending';
             String payMethod = (data['paymentMethod'] ?? '')
@@ -234,15 +307,13 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
               totalRevenue += amount;
               paidCount++;
               clerkStats[clerk] = (clerkStats[clerk] ?? 0) + amount;
-
-              // Payment Method Logic
               if (payMethod.contains('TELE') || payMethod.contains('BIRR')) {
                 telebirrTotal += amount;
               } else if (payMethod.contains('BANK') ||
                   payMethod.contains('TRANSFER')) {
                 bankTotal += amount;
               } else {
-                cashTotal += amount; // Default to cash
+                cashTotal += amount;
               }
             } else {
               unpaidCount++;
@@ -256,7 +327,6 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Quick Filter Chips
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
@@ -289,8 +359,6 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
                   ),
                 ),
                 const SizedBox(height: 20),
-
-                // Main Stats
                 Row(
                   children: [
                     Expanded(
@@ -330,7 +398,6 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
                     ),
                   ],
                 ),
-
                 const SizedBox(height: 30),
                 _sectionHeader("PAYMENT CHANNELS (Revenue)"),
                 Row(
@@ -358,7 +425,6 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
                     ),
                   ],
                 ),
-
                 const SizedBox(height: 30),
                 _sectionHeader("OFFICER PERFORMANCE (Tickets Issued)"),
                 if (officerStats.isEmpty)
@@ -370,7 +436,6 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
                   (e) =>
                       _buildUserTile(e.key, "Tickets: ${e.value}", 'officer'),
                 ),
-
                 const SizedBox(height: 30),
                 _sectionHeader("CLERK PERFORMANCE (Collections)"),
                 if (clerkStats.isEmpty)
@@ -385,10 +450,41 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
                     'clerk',
                   ),
                 ),
-
                 const SizedBox(height: 30),
                 _sectionHeader("LIVE AUDIT TRAIL"),
-                _buildAuditTrail(),
+                _buildAuditTrail(_startDate, _endDate),
+                const SizedBox(height: 20),
+                Center(
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.picture_as_pdf),
+                    label: const Text('Generate PDF Report'),
+                    onPressed: () {
+                      _generatePdfReport(
+                        totalFines: totalFines,
+                        totalRevenue: totalRevenue,
+                        paidCount: paidCount,
+                        unpaidCount: unpaidCount,
+                        cashTotal: cashTotal,
+                        telebirrTotal: telebirrTotal,
+                        bankTotal: bankTotal,
+                        officerStats: officerStats,
+                        clerkStats: clerkStats,
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      backgroundColor: Colors.blue.shade900,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 30,
+                        vertical: 15,
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           );
@@ -396,8 +492,6 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
       ),
     );
   }
-
-  // --- Preserved Support Widgets ---
 
   Widget _sectionHeader(String title) {
     return Padding(
@@ -412,15 +506,12 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
     );
   }
 
-  // This function now checks for ID and displays Name properly
   Widget _buildUserTile(String userId, String subtitle, String role) {
     return FutureBuilder<DocumentSnapshot>(
       future: FirebaseFirestore.instance.collection('users').doc(userId).get(),
       builder: (context, snap) {
         String displayName = userId;
 
-        // If we found the user doc, use the 'name' field.
-        // If not, we keep the ID (or the raw name string if that's what was stored)
         if (snap.hasData && snap.data!.exists) {
           var userData = snap.data!.data() as Map<String, dynamic>;
           displayName = userData['name'] ?? userId;
@@ -501,7 +592,7 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
     );
   }
 
-  Widget _buildAuditTrail() {
+  Widget _buildAuditTrail(DateTime startDate, DateTime endDate) {
     return Container(
       height: 250,
       decoration: BoxDecoration(
@@ -512,12 +603,19 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
       child: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
             .collection('audit_logs')
+            .where('timestamp', isGreaterThanOrEqualTo: startDate)
+            .where('timestamp', isLessThanOrEqualTo: endDate)
             .orderBy('timestamp', descending: true)
             .limit(15)
             .snapshots(),
         builder: (context, snapshot) {
-          if (!snapshot.hasData) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
+          }
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            return const Center(
+              child: Text("No audit trails for this period."),
+            );
           }
           return ListView.separated(
             itemCount: snapshot.data!.docs.length,
@@ -556,6 +654,161 @@ class _SupervisorDashboardState extends State<SupervisorDashboard> {
           );
         },
       ),
+    );
+  }
+
+  pw.Widget _buildPdfHeader(pw.Context context) {
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(
+          'Supervisor Report',
+          style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold),
+        ),
+        pw.SizedBox(height: 5),
+        pw.Text(
+          'Date Range: ${DateFormat('yMMMd').format(_startDate)} - ${DateFormat('yMMMd').format(_endDate)}',
+        ),
+        pw.Divider(thickness: 2),
+        pw.SizedBox(height: 20),
+      ],
+    );
+  }
+
+  pw.Widget _buildPdfSummary(
+    double totalFines,
+    double totalRevenue,
+    int paidCount,
+    int unpaidCount,
+  ) {
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(
+          'Summary',
+          style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+        ),
+        pw.SizedBox(height: 10),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('Total Fines Issued:'),
+            pw.Text('${totalFines.toStringAsFixed(2)} ETB'),
+          ],
+        ),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('Total Revenue Collected:'),
+            pw.Text('${totalRevenue.toStringAsFixed(2)} ETB'),
+          ],
+        ),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [pw.Text('Paid Tickets:'), pw.Text('$paidCount')],
+        ),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [pw.Text('Unpaid Tickets:'), pw.Text('$unpaidCount')],
+        ),
+        pw.SizedBox(height: 20),
+      ],
+    );
+  }
+
+  pw.Widget _buildPdfPaymentChannels(
+    double cashTotal,
+    double telebirrTotal,
+    double bankTotal,
+  ) {
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(
+          'Payment Channels (Revenue)',
+          style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+        ),
+        pw.SizedBox(height: 10),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('Cash:'),
+            pw.Text('${cashTotal.toStringAsFixed(2)} ETB'),
+          ],
+        ),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('Telebirr:'),
+            pw.Text('${telebirrTotal.toStringAsFixed(2)} ETB'),
+          ],
+        ),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('Bank:'),
+            pw.Text('${bankTotal.toStringAsFixed(2)} ETB'),
+          ],
+        ),
+        pw.SizedBox(height: 20),
+      ],
+    );
+  }
+
+  pw.Widget _buildPdfUserPerformance(String title, Map<String, num> userStats) {
+    final entries = userStats.entries.toList();
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(
+          title,
+          style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+        ),
+        pw.SizedBox(height: 10),
+        pw.Table.fromTextArray(
+          headers: ['User', 'Value'],
+          data: List<List<String>>.generate(entries.length, (index) {
+            final entry = entries[index];
+            final userName = _userNamesCache[entry.key] ?? entry.key;
+            return [userName, entry.value.toStringAsFixed(0)];
+          }),
+          headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+          cellAlignment: pw.Alignment.centerLeft,
+          headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
+        ),
+        pw.SizedBox(height: 20),
+      ],
+    );
+  }
+
+  pw.Widget _buildPdfAuditTrail(String title, List<Map<String, dynamic>> logs) {
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(
+          title,
+          style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+        ),
+        pw.SizedBox(height: 10),
+        pw.Table.fromTextArray(
+          headers: ['Action', 'User', 'Time'],
+          data: List<List<String>>.generate(logs.length, (index) {
+            final log = logs[index];
+            return [
+              log['action'] ?? 'N/A',
+              log['userEmail'] ?? 'Unknown',
+              log['timestamp'] != null
+                  ? DateFormat(
+                      'yMMMd HH:mm',
+                    ).format((log['timestamp'] as Timestamp).toDate())
+                  : 'N/A',
+            ];
+          }),
+          headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+          cellAlignment: pw.Alignment.centerLeft,
+          headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
+        ),
+      ],
     );
   }
 }

@@ -3,7 +3,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:typed_data';
+import 'package:share_plus/share_plus.dart';
+import '../pdf_saver.dart';
 
 class ClerkPaymentPage extends StatefulWidget {
   final String clerkId;
@@ -68,25 +71,24 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
         ],
       ),
     );
-
-    await Printing.layoutPdf(onLayout: (format) => pdf.save());
+    final bytes = await pdf.save();
+    await savePdf(bytes, "Clerk_Report.pdf");
   }
 
   // --- 1. GENERATE DIGITAL RECEIPT (Updated with Full QR Data) ---
-  Future<void> _generateDigitalReceipt(Map<String, dynamic> data) async {
+  Future<Uint8List> _generateDigitalReceipt(Map<String, dynamic> data) async {
     final pdf = pw.Document();
     final String formattedDate = DateFormat(
       'yyyy-MM-dd HH:mm',
     ).format(DateTime.now());
 
-    // This string is what the QR code will show when scanned
     String qrData =
         "Ticket ID: ${data['ticketId']}\n"
         "Plate: ${data['plate']}\n"
         "Violation: ${data['violation']}\n"
         "Amount: ${data['amount']} ETB\n"
         "Status: PAID";
-
+    "Date: $formattedDate";
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.roll80,
@@ -95,17 +97,25 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
             crossAxisAlignment: pw.CrossAxisAlignment.center,
             children: [
               pw.Text(
-                "BAHIRDAR TRAFFIC PAYMENT",
+                "ባህርዳር ከተማ አስተዳደር ትራፊክ ጽ/ቤት",
                 style: pw.TextStyle(
                   fontWeight: pw.FontWeight.bold,
-                  fontSize: 14,
+                  fontSize: 16,
                 ),
               ),
+               pw.SizedBox(height: 2),
+              pw.Text(
+                "Bahirdar City Administration Traffic Office",
+                style: const pw.TextStyle(
+                  fontSize: 10,
+                ),
+              ),
+              pw.SizedBox(height: 5),
               pw.Divider(),
               pw.SizedBox(height: 10),
               pw.BarcodeWidget(
                 barcode: pw.Barcode.qrCode(),
-                data: qrData, // <--- Now contains the full info!
+                data: qrData,
                 width: 100,
                 height: 100,
               ),
@@ -136,11 +146,27 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
         },
       ),
     );
-    await Printing.layoutPdf(onLayout: (format) => pdf.save());
+
+    return pdf.save();
+  }
+
+  Future<void> _printReceipt(Map<String, dynamic> data) async {
+    final bytes = await _generateDigitalReceipt(data);
+    await savePdf(bytes, "Receipt.pdf");
+    if (kIsWeb) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Receipt Downloaded")));
+    } 
+  }
+
+  Future<void> _shareReceipt(Map<String, dynamic> data) async {
+    final bytes = await _generateDigitalReceipt(data);
+    final XFile file = XFile.fromData(bytes, mimeType: 'application/pdf', name: 'Receipt.pdf');
+    await Share.shareXFiles([file], text: 'Here is your receipt.');
   }
 
   // --- 3. PROCESS PAYMENT LOGIC ---
-  // --- REPLACE YOUR OLD _processPayment WITH THIS ---
   void _processPayment(
     String docId,
     Map<String, dynamic> ticketData,
@@ -172,7 +198,7 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
       // 3. Add method to ticketData for the receipt and print
       Map<String, dynamic> receiptData = Map.from(ticketData);
       receiptData['paymentMethod'] = paymentMethod;
-      _generateDigitalReceipt(receiptData);
+      _printReceipt(receiptData);
     } catch (e) {
       Navigator.pop(context); // Close loading
       ScaffoldMessenger.of(
@@ -516,28 +542,51 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
       ),
       body: Column(
         children: [
-          // Search Section
+          // Header and Search Section
           Container(
             padding: const EdgeInsets.all(20),
             color: Colors.white,
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: "Enter Plate Number (e.g. AA 12345)",
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.clear),
-                  onPressed: () => setState(() {
-                    _searchController.clear();
-                  }),
+            child: Column(
+              children: [
+                const Text(
+                  "ባህርዳር ከተማ አስተዳደር ትራፊክ ጽ/ቤት",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
                 ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(15),
+                const SizedBox(height: 5),
+                const Text(
+                  "Bahirdar City Administration Traffic Office",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey,
+                  ),
                 ),
-                filled: true,
-                fillColor: Colors.grey[50],
-              ),
-              onChanged: (val) => setState(() {}),
+                const SizedBox(height: 20),
+                TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: "Enter Plate Number (e.g. AA 12345)",
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () => setState(() {
+                        _searchController.clear();
+                      }),
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                    filled: true,
+                    fillColor: Colors.grey[50],
+                  ),
+                  onChanged: (val) => setState(() {}),
+                ),
+              ],
             ),
           ),
 
@@ -626,24 +675,58 @@ class _ClerkPaymentPageState extends State<ClerkPaymentPage> {
                               ],
                             ),
                             const Divider(height: 25),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed: () => _showPaymentMethodDialog(
+                                      results[index].id,
+                                      data,
+                                    ),
+                                    icon: const Icon(Icons.payment),
+                                    label: const Text(
+                                      "PROCESS PAYMENT",
+                                    ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.green.shade700,
+                                      foregroundColor: Colors.white,
+                                      minimumSize: const Size(double.infinity, 50),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                ElevatedButton.icon(
+                                  onPressed: () => _shareReceipt(data),
+                                  icon: const Icon(Icons.share),
+                                  label: const Text('SHARE'),
+                                  style: ElevatedButton.styleFrom(
+                                    foregroundColor: Colors.white,
+                                    backgroundColor: Colors.blue.shade700,
+                                    minimumSize: const Size(120, 50),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                             const SizedBox(height: 10),
                             ElevatedButton.icon(
-                              onPressed: () => _showPaymentMethodDialog(
-                                results[index].id,
-                                data,
-                              ),
-                              icon: const Icon(Icons.payment),
-                              label: const Text(
-                                "PROCESS PAYMENT & PRINT RECEIPT",
-                              ),
+                              onPressed: () => _printReceipt(data),
+                              icon: const Icon(Icons.print),
+                              label: const Text('PRINT RECEIPT'),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green.shade700,
                                 foregroundColor: Colors.white,
+                                backgroundColor: Colors.grey.shade700,
                                 minimumSize: const Size(double.infinity, 50),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(10),
                                 ),
                               ),
-                            ),
+                            )
                           ],
                         ),
                       ),

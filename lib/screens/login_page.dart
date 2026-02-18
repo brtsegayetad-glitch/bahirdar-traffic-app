@@ -142,12 +142,22 @@ class _LoginPageState extends State<LoginPage> {
                       size: 50,
                       color: Colors.grey,
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 20),
                     const Text(
-                      "BAHIR DAR TRAFFIC SYSTEM",
+                      "ባህርዳር ከተማ አስተዳደር ትራፊክ ጽ/ቤት",
+                      textAlign: TextAlign.center,
                       style: TextStyle(
-                        fontSize: 14,
-                        letterSpacing: 1.5,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    const Text(
+                      "Bahirdar City Administration Traffic Office",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 16,
                         color: Colors.grey,
                       ),
                     ),
